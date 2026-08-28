@@ -55,6 +55,7 @@ export default function App() {
   const [exportTab, setExportTab] = useState('files');
   const [outputFormat, setOutputFormat] = useState('png');
   const [includeStaticAssets, setIncludeStaticAssets] = useState(false);
+  const [groupSamePrices, setGroupSamePrices] = useState(true);
   const [previewItems, setPreviewItems] = useState([]);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState('');
@@ -102,8 +103,9 @@ export default function App() {
       priceRows: selectedRows,
       productName: selectedProduct?.name ?? '',
       actionRule,
+      groupSamePrices,
     });
-  }, [svgFiles, selectedRows, selectedProduct, actionRule]);
+  }, [svgFiles, selectedRows, selectedProduct, actionRule, groupSamePrices]);
 
   const outputCounts = useMemo(() => {
     const includeSvg = outputFormat === 'svg' || outputFormat === 'both';
@@ -117,6 +119,7 @@ export default function App() {
       generatedPngCount,
       generatedStaticCount,
       generatedCount: generatedSvgCount + generatedPngCount + generatedStaticCount,
+      outputFolderCount: svgPlan.outputFolderCount,
     };
   }, [includeStaticAssets, outputFormat, svgPlan]);
 
@@ -244,6 +247,7 @@ export default function App() {
         priceTypography: resolvedTypography,
         outputFormat,
         includeStaticAssets,
+        groupSamePrices,
       });
       setLastExport({ type: 'success', ...result });
     } catch (error) {
@@ -395,8 +399,8 @@ export default function App() {
           <div className="price-summary">
             {statLabel(selectedRows.length || '-', 'seleccionados')}
             {statLabel(priceRows.filter((row) => row.normal && row.eminent).length || '-', 'con 2 precios')}
+            {statLabel(outputCounts.outputFolderCount || '-', 'carpetas')}
             {statLabel(outputCounts.generatedPngCount || '-', 'png')}
-            {statLabel(outputCounts.generatedCount || '-', 'descarga')}
           </div>
 
           <div className="table-wrap">
@@ -544,7 +548,7 @@ export default function App() {
               <div className="download-summary">
                 {statLabel(outputCounts.generatedPngCount || '-', 'png')}
                 {statLabel(outputCounts.generatedSvgCount || '-', 'svg')}
-                {statLabel(outputCounts.generatedStaticCount || '-', 'assets')}
+                {statLabel(outputCounts.outputFolderCount || '-', 'carpetas')}
               </div>
 
               <label className={outputFormat === 'svg' ? 'check-row disabled' : 'check-row'}>
@@ -557,8 +561,17 @@ export default function App() {
                 <span>Incluir PNG ya existentes</span>
               </label>
 
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={groupSamePrices}
+                  onChange={(event) => setGroupSamePrices(event.target.checked)}
+                />
+                <span>Agrupar locales con mismo precio</span>
+              </label>
+
               <p className="hint">
-                Por defecto baja solo las imagenes PNG generadas desde los SVG para que el ZIP sea mas liviano.
+                Por defecto baja solo las imagenes PNG generadas desde los SVG y agrupa locales con igual precio.
               </p>
             </div>
           ) : (

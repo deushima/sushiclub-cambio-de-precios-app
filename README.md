@@ -32,3 +32,4 @@ La app modifica solo nodos `<text>` o `<tspan>` que sean placeholders completos.
 - `Solo SVG` genera un ZIP editable sin imagenes convertidas.
 - `PNG + SVG` incluye ambas versiones.
 - Los assets fijos ya renderizados se copian solo si se activa `Incluir PNG ya existentes`.
+- `Agrupar locales con mismo precio` queda activo por defecto. Si varios locales comparten precio normal, precio Eminent y plantilla, se genera una sola carpeta con nombres unidos por ` +`, por ejemplo `ACASSUSO + PALERMO + SAN JUAN`.

@@ -428,19 +428,74 @@ function targetsForTemplate(templateFile, priceRows, actionRule, availableTempla
   return priceRows.filter((row) => row.branchKey === templateFile.templateKey);
 }
 
-export function summarizeTemplatePlan({ svgFiles, priceRows, productName, actionRule }) {
+function priceGroupKey(row) {
+  return [row.templateName, row.normal ?? '', row.eminent ?? ''].map((part) => String(part)).join('|');
+}
+
+function compactBranchFolderName(rows) {
+  const names = rows.map((row) => row.folderName || row.branchName).filter(Boolean);
+  const full = names.join(' + ');
+  if (full.length <= 180) return full;
+
+  const kept = [];
+  let length = 0;
+  for (const name of names) {
+    const nextLength = length + (kept.length ? 3 : 0) + name.length;
+    if (nextLength > 150) break;
+    kept.push(name);
+    length = nextLength;
+  }
+
+  const remaining = names.length - kept.length;
+  return `${kept.join(' + ')} + ${remaining} LOCALES MAS`;
+}
+
+function rowGroupsForTargets(targets, groupSamePrices = false) {
+  if (!groupSamePrices) {
+    return targets.map((row) => ({
+      id: row.id,
+      folderName: row.folderName,
+      priceRow: row,
+      priceRows: [row],
+    }));
+  }
+
+  const groups = new Map();
+  targets.forEach((row) => {
+    const key = priceGroupKey(row);
+    const group = groups.get(key) ?? {
+      id: key,
+      priceRow: row,
+      priceRows: [],
+    };
+    group.priceRows.push(row);
+    groups.set(key, group);
+  });
+
+  return Array.from(groups.values()).map((group) => ({
+    ...group,
+    folderName: compactBranchFolderName(group.priceRows),
+  }));
+}
+
+export function summarizeTemplatePlan({ svgFiles, priceRows, productName, actionRule, groupSamePrices = false }) {
   const allTemplateFiles = planAllTemplateFiles(svgFiles, productName, actionRule);
   const templateFiles = allTemplateFiles.filter((item) => isSvgFile(item.file));
   const staticFiles = allTemplateFiles.filter((item) => !isSvgFile(item.file));
   const availableTemplateKeys = new Set(templateFiles.map((file) => file.templateKey));
   const templateCounts = new Map();
+  const outputFolders = new Set();
   const generatedSvgCount = templateFiles.reduce((sum, templateFile) => {
-    const count = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys).length;
+    const targets = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys);
+    const groups = rowGroupsForTargets(targets, groupSamePrices);
+    groups.forEach((group) => outputFolders.add(group.folderName));
+    const count = groups.length;
     templateCounts.set(templateFile.templateName, (templateCounts.get(templateFile.templateName) ?? 0) + 1);
     return sum + count;
   }, 0);
   const generatedStaticCount = staticFiles.reduce((sum, templateFile) => {
-    return sum + targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys).length;
+    const targets = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys);
+    return sum + rowGroupsForTargets(targets, groupSamePrices).length;
   }, 0);
   const generatedPngCount = generatedSvgCount;
   const missingTemplates = [];
@@ -464,7 +519,18 @@ export function summarizeTemplatePlan({ svgFiles, priceRows, productName, action
     generatedSvgCount,
     generatedPngCount,
     generatedStaticCount,
+    outputFolderCount: outputFolders.size,
   };
+}
+
+function resultBranchName(result) {
+  const rows = result.priceRows ?? [result.priceRow];
+  return rows.map((row) => row.branchName).join(' / ');
+}
+
+function resultGroupName(result) {
+  const rows = result.priceRows ?? [result.priceRow];
+  return Array.from(new Set(rows.map((row) => row.groupName).filter(Boolean))).join(' / ');
 }
 
 async function buildManifestRows(results) {
@@ -486,8 +552,8 @@ async function buildManifestRows(results) {
     result.outputPath,
     result.kind,
     result.templateName,
-    result.priceRow.branchName,
-    result.priceRow.groupName,
+    resultBranchName(result),
+    resultGroupName(result),
     result.priceRow.channel.toUpperCase(),
     formatPrice(result.priceRow.normal),
     formatPrice(result.priceRow.eminent),
@@ -712,6 +778,7 @@ export async function exportPriceZip({
   priceTypography,
   outputFormat = 'png',
   includeStaticAssets = false,
+  groupSamePrices = false,
 }) {
   const files = svgFiles.filter((file) => !isIgnoredFile(file));
   const templateFiles = planAllTemplateFiles(files, productName, actionRule);
@@ -721,7 +788,7 @@ export async function exportPriceZip({
   const { includeSvg, includePng } = outputFormatFlags(outputFormat);
 
   const availableTemplateKeys = new Set(svgTemplateFiles.map((file) => file.templateKey));
-  const missing = summarizeTemplatePlan({ svgFiles: files, priceRows, productName, actionRule }).missingTemplates;
+  const missing = summarizeTemplatePlan({ svgFiles: files, priceRows, productName, actionRule, groupSamePrices }).missingTemplates;
   if (missing.length) {
     throw new Error(`Falta carpeta plantilla para: ${missing.join(', ')}.`);
   }
@@ -733,12 +800,13 @@ export async function exportPriceZip({
   for (const templateFile of templateFiles) {
     const targets = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys);
     if (!targets.length) continue;
+    const targetGroups = rowGroupsForTargets(targets, groupSamePrices);
 
     if (!isSvgFile(templateFile.file)) {
       if (!includePng || !includeStaticAssets) continue;
       const assetBuffer = await templateFile.file.arrayBuffer();
-      for (const priceRow of targets) {
-        const outputParts = [priceRow.folderName, ...templateFile.relativeParts];
+      for (const targetGroup of targetGroups) {
+        const outputParts = [targetGroup.folderName, ...templateFile.relativeParts];
         const outputPath = safeZipPath(outputParts);
 
         zip.file(outputPath, assetBuffer);
@@ -747,7 +815,8 @@ export async function exportPriceZip({
           outputPath,
           kind: 'ASSET',
           templateName: templateFile.templateName,
-          priceRow,
+          priceRow: targetGroup.priceRow,
+          priceRows: targetGroup.priceRows,
           typography: null,
           warnings: [],
         });
@@ -757,8 +826,9 @@ export async function exportPriceZip({
 
     const svgText = await templateFile.file.text();
 
-    for (const priceRow of targets) {
-      const outputParts = [priceRow.folderName, ...templateFile.relativeParts];
+    for (const targetGroup of targetGroups) {
+      const priceRow = targetGroup.priceRow;
+      const outputParts = [targetGroup.folderName, ...templateFile.relativeParts];
       const outputPath = safeZipPath(outputParts);
       const processed = replaceSvgPrices(svgText, priceRow, { priceTypography: exportTypography });
 
@@ -770,6 +840,7 @@ export async function exportPriceZip({
           kind: 'SVG',
           templateName: templateFile.templateName,
           priceRow,
+          priceRows: targetGroup.priceRows,
           typography: exportTypography,
           warnings: processed.warnings,
         });
@@ -785,6 +856,7 @@ export async function exportPriceZip({
           kind: 'PNG',
           templateName: templateFile.templateName,
           priceRow,
+          priceRows: targetGroup.priceRows,
           typography: exportTypography,
           warnings: processed.warnings,
         });
