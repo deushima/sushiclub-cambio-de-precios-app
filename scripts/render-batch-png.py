@@ -97,17 +97,14 @@ def rect_info(rect):
 
 
 def find_nearest_pill(root, node):
-    text_element = text_element_for(node)
     x = node_number_attr(node, "x")
     y = node_number_attr(node, "y")
     if x is None or y is None:
         return None
 
-    order = {id(item): index for index, item in enumerate(root.iter())}
-    text_index = order.get(id(text_element), 0)
     candidates = []
     for rect in root.iter():
-        if local_name(rect) != "rect" or order.get(id(rect), math.inf) >= text_index:
+        if local_name(rect) != "rect":
             continue
         info = rect_info(rect)
         if not info:
@@ -152,6 +149,8 @@ def apply_price_typography(node):
         target.set("font-weight", "600")
         target.set("font-style", "normal")
         target.set("letter-spacing", "0")
+        target.set("dominant-baseline", "middle")
+        target.set("alignment-baseline", "middle")
     if text is not None:
         text.set("data-sushiclub-price", "true")
 
@@ -226,8 +225,11 @@ def center_and_fit_price(node, price_text, pill):
     if pill:
         if text is not None:
             text.set("text-anchor", "middle")
+            text.set("dominant-baseline", "middle")
+            text.set("alignment-baseline", "middle")
         max_width = max(1, pill["width"] - max(54, pill["width"] * 0.28))
         node.set("x", f"{pill['center_x']:.3f}".rstrip("0").rstrip("."))
+        node.set("y", f"{pill['center_y']:.3f}".rstrip("0").rstrip("."))
     else:
         base_size = node_number_attr(node, "font-size") or 42
         placeholder_width = estimate_text_width(original_marker, base_size)

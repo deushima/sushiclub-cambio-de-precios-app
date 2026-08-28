@@ -77,12 +77,7 @@ function rectInfo(rect) {
   return { element: rect, x, y, width, height, centerX: x + width / 2, centerY: y + height / 2 };
 }
 
-function isBefore(source, target) {
-  return Boolean(source.compareDocumentPosition(target) & 4);
-}
-
 function findNearestPill(root, node) {
-  const textElement = textElementFor(node);
   const x = nodeNumberAttr(node, 'x');
   const y = nodeNumberAttr(node, 'y');
   if (x === null || y === null) return null;
@@ -90,7 +85,6 @@ function findNearestPill(root, node) {
   const candidates = Array.from(root.querySelectorAll('rect'))
     .map(rectInfo)
     .filter(Boolean)
-    .filter((rect) => isBefore(rect.element, textElement))
     .map((rect) => {
       const insideY = y >= rect.y - rect.height * 0.35 && y <= rect.y + rect.height * 1.35;
       const insideX = x >= rect.x - rect.width * 0.2 && x <= rect.x + rect.width * 1.2;
@@ -152,10 +146,14 @@ function applyPriceTypography(node, typography) {
   text.setAttribute('font-weight', String(typography.cssWeight));
   text.setAttribute('font-style', typography.style);
   text.setAttribute('letter-spacing', '0');
+  text.setAttribute('dominant-baseline', 'middle');
+  text.setAttribute('alignment-baseline', 'middle');
   node.setAttribute('font-family', typography.family);
   node.setAttribute('font-weight', String(typography.cssWeight));
   node.setAttribute('font-style', typography.style);
   node.setAttribute('letter-spacing', '0');
+  node.setAttribute('dominant-baseline', 'middle');
+  node.setAttribute('alignment-baseline', 'middle');
 }
 
 function removePriceFilterCrop(node) {
@@ -191,7 +189,10 @@ function centerAndFitPrice(node, priceText, pill, typography) {
 
   if (pill) {
     text?.setAttribute('text-anchor', 'middle');
+    text?.setAttribute('dominant-baseline', 'middle');
+    text?.setAttribute('alignment-baseline', 'middle');
     node.setAttribute('x', String(Number(pill.centerX.toFixed(3))));
+    node.setAttribute('y', String(Number(pill.centerY.toFixed(3))));
   }
   node.removeAttribute('textLength');
   node.removeAttribute('lengthAdjust');
