@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import FileSaver from 'file-saver';
 import { cleanText, formatPrice, normalizeKey, slugFolder } from './text.js';
 import { templateKey, templateLabel } from './actionRules.js';
+import { resolvePriceTypography } from './priceTypography.js';
 
 const { saveAs } = FileSaver;
 
@@ -140,12 +141,26 @@ function setFontSize(node, fontSize) {
   text?.setAttribute('font-size', String(Number(fontSize.toFixed(3))));
 }
 
+function applyPriceTypography(node, typography) {
+  const text = textElementFor(node);
+  if (!text) return;
+
+  text.setAttribute('data-sushiclub-price', 'true');
+  text.setAttribute('font-family', typography.family);
+  text.setAttribute('font-weight', String(typography.cssWeight));
+  text.setAttribute('font-style', typography.style);
+  node.setAttribute('font-family', typography.family);
+  node.setAttribute('font-weight', String(typography.cssWeight));
+  node.setAttribute('font-style', typography.style);
+}
+
 function currentFontSize(node) {
   return nodeNumberAttr(node, 'font-size') ?? 42;
 }
 
-function centerAndFitPrice(node, priceText, pill) {
+function centerAndFitPrice(node, priceText, pill, typography) {
   node.textContent = priceText || '';
+  applyPriceTypography(node, typography);
 
   if (!pill) return;
 
@@ -169,6 +184,42 @@ function centerAndFitPrice(node, priceText, pill) {
     node.setAttribute('textLength', String(Number(maxWidth.toFixed(3))));
     node.setAttribute('lengthAdjust', 'spacingAndGlyphs');
   }
+}
+
+function cssString(value) {
+  return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function ensureFontFace(root, typography) {
+  if (!typography.dataUrl) return;
+
+  const doc = root.ownerDocument;
+  const namespace = 'http://www.w3.org/2000/svg';
+  let defs = root.querySelector('defs');
+  if (!defs) {
+    defs = doc.createElementNS(namespace, 'defs');
+    root.insertBefore(defs, root.firstChild);
+  }
+
+  let style = defs.querySelector('#sushiclub-price-font-face');
+  if (!style) {
+    style = doc.createElementNS(namespace, 'style');
+    style.setAttribute('id', 'sushiclub-price-font-face');
+    defs.insertBefore(style, defs.firstChild);
+  }
+
+  style.textContent = `
+@font-face {
+  font-family: ${cssString(typography.family)};
+  src: url("${typography.dataUrl}") format("opentype");
+  font-weight: ${typography.cssWeight};
+  font-style: ${typography.style};
+}
+text[data-sushiclub-price="true"] {
+  font-family: ${cssString(typography.family)};
+  font-weight: ${typography.cssWeight};
+  font-style: ${typography.style};
+}`.trim();
 }
 
 function measurableRoot(doc) {
@@ -202,13 +253,17 @@ export function inspectSvg(svgText) {
   };
 }
 
-export function replaceSvgPrices(svgText, priceRow) {
+export function replaceSvgPrices(svgText, priceRow, options = {}) {
   const doc = parseSvg(svgText);
   const { root, cleanup } = measurableRoot(doc);
   const normalNodes = selectablePlaceholders(root, isNormalPlaceholder);
   const eminentNodes = selectablePlaceholders(root, isEminentPlaceholder);
   const normalText = formatPrice(priceRow.normal);
   const eminentText = formatPrice(priceRow.eminent);
+  const typography = {
+    ...resolvePriceTypography(options.priceTypography),
+    dataUrl: options.priceTypography?.dataUrl,
+  };
   const warnings = [];
 
   if (!normalText) warnings.push('Sin precio normal.');
@@ -216,8 +271,9 @@ export function replaceSvgPrices(svgText, priceRow) {
   if (!normalNodes.length) warnings.push('No se encontro placeholder $$$$.');
   if (!eminentNodes.length) warnings.push('No se encontro placeholder @@@@.');
 
-  normalNodes.forEach((node) => centerAndFitPrice(node, normalText, findNearestPill(root, node)));
-  eminentNodes.forEach((node) => centerAndFitPrice(node, eminentText, findNearestPill(root, node)));
+  ensureFontFace(root, typography);
+  normalNodes.forEach((node) => centerAndFitPrice(node, normalText, findNearestPill(root, node), typography));
+  eminentNodes.forEach((node) => centerAndFitPrice(node, eminentText, findNearestPill(root, node), typography));
 
   try {
     const serializer = new XMLSerializer();
@@ -400,7 +456,20 @@ export function summarizeTemplatePlan({ svgFiles, priceRows, productName, action
 }
 
 async function buildManifestRows(results) {
-  const header = ['archivo', 'tipo', 'plantilla', 'local', 'grupo_excel', 'canal', 'precio_normal', 'precio_eminent', 'estado'];
+  const header = [
+    'archivo',
+    'tipo',
+    'plantilla',
+    'local',
+    'grupo_excel',
+    'canal',
+    'precio_normal',
+    'precio_eminent',
+    'fuente',
+    'peso',
+    'estilo',
+    'estado',
+  ];
   const rows = results.map((result) => [
     result.outputPath,
     result.kind,
@@ -410,6 +479,9 @@ async function buildManifestRows(results) {
     result.priceRow.channel.toUpperCase(),
     formatPrice(result.priceRow.normal),
     formatPrice(result.priceRow.eminent),
+    result.typography ? result.typography.family : '',
+    result.typography ? result.typography.weight : '',
+    result.typography ? result.typography.style : '',
     result.warnings.length ? result.warnings.join(' | ') : 'OK',
   ]);
 
@@ -420,6 +492,36 @@ async function buildManifestRows(results) {
         .join(',')
     )
     .join('\n');
+}
+
+function arrayBufferToBase64(buffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+async function resolveExportTypography(priceTypography) {
+  const typography = resolvePriceTypography(priceTypography);
+  if (typeof fetch !== 'function' || typeof btoa !== 'function') return typography;
+
+  try {
+    const response = await fetch(typography.url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const buffer = await response.arrayBuffer();
+    return {
+      ...typography,
+      dataUrl: `data:font/otf;base64,${arrayBufferToBase64(buffer)}`,
+    };
+  } catch {
+    return typography;
+  }
 }
 
 export async function analyzeSvgFiles(files, { productName = '', actionRule = null } = {}) {
@@ -457,7 +559,7 @@ export async function analyzeSvgFiles(files, { productName = '', actionRule = nu
   return results;
 }
 
-export async function exportPriceZip({ svgFiles, priceRows, productName, actionRule }) {
+export async function exportPriceZip({ svgFiles, priceRows, productName, actionRule, priceTypography }) {
   const files = svgFiles.filter((file) => !isIgnoredFile(file));
   const templateFiles = planAllTemplateFiles(files, productName, actionRule);
   const svgTemplateFiles = templateFiles.filter((item) => isSvgFile(item.file));
@@ -472,6 +574,7 @@ export async function exportPriceZip({ svgFiles, priceRows, productName, actionR
 
   const zip = new JSZip();
   const results = [];
+  const exportTypography = await resolveExportTypography(priceTypography);
 
   for (const templateFile of templateFiles) {
     const targets = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys);
@@ -490,6 +593,7 @@ export async function exportPriceZip({ svgFiles, priceRows, productName, actionR
           kind: 'ASSET',
           templateName: templateFile.templateName,
           priceRow,
+          typography: null,
           warnings: [],
         });
       }
@@ -501,7 +605,7 @@ export async function exportPriceZip({ svgFiles, priceRows, productName, actionR
     for (const priceRow of targets) {
       const outputParts = [priceRow.folderName, ...templateFile.relativeParts];
       const outputPath = safeZipPath(outputParts);
-      const processed = replaceSvgPrices(svgText, priceRow);
+      const processed = replaceSvgPrices(svgText, priceRow, { priceTypography: exportTypography });
 
       zip.file(outputPath, processed.svgText);
       results.push({
@@ -510,6 +614,7 @@ export async function exportPriceZip({ svgFiles, priceRows, productName, actionR
         kind: 'SVG',
         templateName: templateFile.templateName,
         priceRow,
+        typography: exportTypography,
         warnings: processed.warnings,
       });
     }

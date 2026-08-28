@@ -27,7 +27,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -322,6 +323,76 @@ h2 {
   background: #ffffff;
   color: var(--ink);
   font-weight: 800;
+}
+
+.panel-tabs {
+  background: #eceff2;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 3px;
+}
+
+.panel-tabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  min-height: 34px;
+}
+
+.panel-tabs button.active {
+  background: #ffffff;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+select {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  min-height: 38px;
+  outline: 0;
+  padding: 0 10px;
+  width: 100%;
+}
+
+.typography-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.font-preview {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 12px;
+}
+
+.font-preview span {
+  align-items: center;
+  border: 2px solid #111111;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 34px;
+  justify-content: center;
+  line-height: 1;
+  min-height: 54px;
+  min-width: 220px;
+  padding: 0 26px;
+}
+
+.font-preview small {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 
 .price-summary {

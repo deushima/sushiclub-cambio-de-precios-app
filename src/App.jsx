@@ -7,11 +7,19 @@ import {
   FolderOpen,
   Search,
   Sparkles,
+  Type,
   Upload,
 } from 'lucide-react';
 import { parsePriceWorkbook, priceRowsForProduct } from './lib/priceWorkbook.js';
 import { actionOptionsForProducts, ruleForProduct, templateForRow, templateKeysForRule } from './lib/actionRules.js';
 import { analyzeSvgFiles, exportPriceZip, summarizeTemplatePlan } from './lib/svgBatch.js';
+import {
+  DEFAULT_PRICE_TYPOGRAPHY,
+  PRICE_FONT_FAMILIES,
+  PRICE_FONT_STYLES,
+  PRICE_FONT_WEIGHTS,
+  resolvePriceTypography,
+} from './lib/priceTypography.js';
 import { formatPrice, humanNumber, normalizeSearch } from './lib/text.js';
 
 function statLabel(value, label) {
@@ -39,6 +47,8 @@ export default function App() {
   const [svgAnalysis, setSvgAnalysis] = useState([]);
   const [isExporting, setIsExporting] = useState(false);
   const [lastExport, setLastExport] = useState(null);
+  const [exportTab, setExportTab] = useState('files');
+  const [priceTypography, setPriceTypography] = useState(DEFAULT_PRICE_TYPOGRAPHY);
 
   const products = workbook?.products ?? [];
   const actionOptions = useMemo(() => actionOptionsForProducts(products), [products]);
@@ -74,6 +84,7 @@ export default function App() {
     if (!selectedPriceIds.size) return priceRows.filter((row) => row.normal && row.eminent);
     return priceRows.filter((row) => selectedPriceIds.has(row.id));
   }, [priceRows, selectedPriceIds]);
+  const resolvedTypography = useMemo(() => resolvePriceTypography(priceTypography), [priceTypography]);
 
   const svgPlan = useMemo(() => {
     return summarizeTemplatePlan({
@@ -164,6 +175,7 @@ export default function App() {
         priceRows: selectedRows,
         productName: selectedProduct?.name,
         actionRule,
+        priceTypography: resolvedTypography,
       });
       setLastExport({ type: 'success', ...result });
     } catch (error) {
@@ -363,47 +375,138 @@ export default function App() {
 
         <aside className="panel export-panel">
           <div className="panel-title">
-            <FolderOpen size={20} />
-            <h2>Archivos</h2>
+            {exportTab === 'files' ? <FolderOpen size={20} /> : <Type size={20} />}
+            <h2>{exportTab === 'files' ? 'Archivos' : 'Tipografia'}</h2>
           </div>
 
-          <label className="drop-control">
-            <input type="file" webkitdirectory="true" multiple onChange={handleSvgFolder} />
-            <Upload size={18} />
-            <span>{svgFiles.length ? `${svgFiles.length} archivos` : 'Carpeta accion'}</span>
-          </label>
-
-          <div className="template-list">
-            {templateKeysForRule(actionRule).map((templateName) => {
-              const count = svgPlan.templateCounts.find((item) => item.name === templateName)?.count ?? 0;
-              const missing = svgPlan.missingTemplates.includes(templateName);
-              return (
-                <div className="template-row" key={templateName}>
-                  <span>{templateName}</span>
-                  <small>{count} SVG</small>
-                  {missing && <StatusPill tone="warn">Falta</StatusPill>}
-                </div>
-              );
-            })}
+          <div className="panel-tabs" role="tablist" aria-label="Exportacion">
+            <button
+              type="button"
+              className={exportTab === 'files' ? 'active' : ''}
+              onClick={() => setExportTab('files')}
+            >
+              Archivos
+            </button>
+            <button
+              type="button"
+              className={exportTab === 'typography' ? 'active' : ''}
+              onClick={() => setExportTab('typography')}
+            >
+              Tipografia
+            </button>
           </div>
 
-          <div className="svg-health">
-            {statLabel(readySvgCount || '-', 'listos')}
-            {statLabel(svgAnalysis.length - readySvgCount || '-', 'alertas')}
-          </div>
+          {exportTab === 'files' ? (
+            <>
+              <label className="drop-control">
+                <input type="file" webkitdirectory="true" multiple onChange={handleSvgFolder} />
+                <Upload size={18} />
+                <span>{svgFiles.length ? `${svgFiles.length} archivos` : 'Carpeta accion'}</span>
+              </label>
 
-          <div className="svg-list">
-            {svgAnalysis.slice(0, 40).map((item) => (
-              <div className="svg-row" key={item.path}>
-                {item.ok ? <Check size={16} /> : <AlertTriangle size={16} />}
-                <span title={item.path}>{item.name}</span>
-                <small>
-                  {item.templateName} / ${item.normalCount} / @{item.eminentCount}
-                </small>
+              <div className="template-list">
+                {templateKeysForRule(actionRule).map((templateName) => {
+                  const count = svgPlan.templateCounts.find((item) => item.name === templateName)?.count ?? 0;
+                  const missing = svgPlan.missingTemplates.includes(templateName);
+                  return (
+                    <div className="template-row" key={templateName}>
+                      <span>{templateName}</span>
+                      <small>{count} SVG</small>
+                      {missing && <StatusPill tone="warn">Falta</StatusPill>}
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-            {svgAnalysis.length > 40 && <p className="empty">+{svgAnalysis.length - 40} mas</p>}
-          </div>
+
+              <div className="svg-health">
+                {statLabel(readySvgCount || '-', 'listos')}
+                {statLabel(svgAnalysis.length - readySvgCount || '-', 'alertas')}
+              </div>
+
+              <div className="svg-list">
+                {svgAnalysis.slice(0, 40).map((item) => (
+                  <div className="svg-row" key={item.path}>
+                    {item.ok ? <Check size={16} /> : <AlertTriangle size={16} />}
+                    <span title={item.path}>{item.name}</span>
+                    <small>
+                      {item.templateName} / ${item.normalCount} / @{item.eminentCount}
+                    </small>
+                  </div>
+                ))}
+                {svgAnalysis.length > 40 && <p className="empty">+{svgAnalysis.length - 40} mas</p>}
+              </div>
+            </>
+          ) : (
+            <div className="typography-panel">
+              <style>
+                {`@font-face{font-family:${JSON.stringify(resolvedTypography.family)};src:url("${resolvedTypography.url}") format("opentype");font-weight:${resolvedTypography.cssWeight};font-style:${resolvedTypography.style};}`}
+              </style>
+
+              <div className="field">
+                <label htmlFor="price-font-family">Familia</label>
+                <select
+                  id="price-font-family"
+                  value={priceTypography.family}
+                  onChange={(event) =>
+                    setPriceTypography((current) => ({ ...current, family: event.target.value }))
+                  }
+                >
+                  {PRICE_FONT_FAMILIES.map((family) => (
+                    <option key={family} value={family}>
+                      {family}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="field">
+                <label htmlFor="price-font-weight">Peso</label>
+                <select
+                  id="price-font-weight"
+                  value={priceTypography.weight}
+                  onChange={(event) =>
+                    setPriceTypography((current) => ({ ...current, weight: event.target.value }))
+                  }
+                >
+                  {PRICE_FONT_WEIGHTS.map((weight) => (
+                    <option key={weight.id} value={weight.id}>
+                      {weight.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="field">
+                <label htmlFor="price-font-style">Estilo</label>
+                <select
+                  id="price-font-style"
+                  value={priceTypography.style}
+                  onChange={(event) =>
+                    setPriceTypography((current) => ({ ...current, style: event.target.value }))
+                  }
+                >
+                  {PRICE_FONT_STYLES.map((style) => (
+                    <option key={style.id} value={style.id}>
+                      {style.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="font-preview">
+                <span
+                  style={{
+                    fontFamily: `"${resolvedTypography.family}", sans-serif`,
+                    fontWeight: resolvedTypography.cssWeight,
+                    fontStyle: resolvedTypography.style,
+                  }}
+                >
+                  $34.000
+                </span>
+                <small>{resolvedTypography.fileName}</small>
+              </div>
+            </div>
+          )}
 
           <button type="button" className="primary-button" disabled={!canExport} onClick={handleExport}>
             <Download size={18} />
