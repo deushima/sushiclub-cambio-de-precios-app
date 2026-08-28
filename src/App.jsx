@@ -324,6 +324,7 @@ export default function App() {
           <div className="price-summary">
             {statLabel(selectedRows.length || '-', 'seleccionados')}
             {statLabel(priceRows.filter((row) => row.normal && row.eminent).length || '-', 'con 2 precios')}
+            {statLabel(svgPlan.generatedPngCount || '-', 'png')}
             {statLabel(svgPlan.generatedCount || '-', 'salidas')}
           </div>
 
@@ -517,7 +518,8 @@ export default function App() {
             <div className="notice notice-success">
               <Check size={17} />
               <span>
-                {lastExport.generatedCount} archivos generados ({lastExport.generatedSvgCount} SVG).{' '}
+                {lastExport.generatedCount} archivos generados ({lastExport.generatedSvgCount} SVG,{' '}
+                {lastExport.generatedPngCount} PNG).{' '}
                 {lastExport.warningCount} con aviso.
               </span>
             </div>

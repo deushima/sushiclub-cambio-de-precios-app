@@ -432,6 +432,7 @@ export function summarizeTemplatePlan({ svgFiles, priceRows, productName, action
   const generatedStaticCount = staticFiles.reduce((sum, templateFile) => {
     return sum + targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys).length;
   }, 0);
+  const generatedPngCount = generatedSvgCount;
   const missingTemplates = [];
   const generalKey = templateKey('GENERAL');
   const exceptionKeys = new Set((actionRule?.exceptionTemplates ?? []).map(templateKey));
@@ -449,8 +450,9 @@ export function summarizeTemplatePlan({ svgFiles, priceRows, productName, action
     staticFiles,
     templateCounts: Array.from(templateCounts, ([name, count]) => ({ name, count })),
     missingTemplates,
-    generatedCount: generatedSvgCount + generatedStaticCount,
+    generatedCount: generatedSvgCount + generatedPngCount + generatedStaticCount,
     generatedSvgCount,
+    generatedPngCount,
     generatedStaticCount,
   };
 }
@@ -522,6 +524,75 @@ async function resolveExportTypography(priceTypography) {
   } catch {
     return typography;
   }
+}
+
+function parseDimension(value) {
+  if (!value) return null;
+  const number = Number.parseFloat(String(value).replace(/px$/i, ''));
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+function svgSize(svgText) {
+  const doc = parseSvg(svgText);
+  const root = doc.documentElement;
+  const width = parseDimension(root.getAttribute('width'));
+  const height = parseDimension(root.getAttribute('height'));
+  if (width && height) return { width: Math.round(width), height: Math.round(height) };
+
+  const viewBox = root.getAttribute('viewBox') || '';
+  const parts = viewBox.split(/[\s,]+/).map(Number);
+  if (parts.length === 4 && Number.isFinite(parts[2]) && Number.isFinite(parts[3])) {
+    return { width: Math.round(parts[2]), height: Math.round(parts[3]) };
+  }
+
+  throw new Error('No pude detectar el tamano del SVG para exportar PNG.');
+}
+
+function loadSvgImage(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('No pude renderizar el SVG como imagen.'));
+    image.src = url;
+  });
+}
+
+function canvasToPngBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error('No pude crear el PNG desde el SVG.'));
+    }, 'image/png');
+  });
+}
+
+async function svgToPngBlob(svgText) {
+  if (typeof document === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined') {
+    throw new Error('La exportacion PNG necesita ejecutarse en el navegador.');
+  }
+
+  const { width, height } = svgSize(svgText);
+  const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+
+  try {
+    const image = await loadSvgImage(url);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('No pude preparar el canvas para exportar PNG.');
+    context.drawImage(image, 0, 0, width, height);
+
+    return await canvasToPngBlob(canvas);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function pngPathForSvg(outputPath) {
+  return outputPath.replace(/\.svg$/i, '.png');
 }
 
 export async function analyzeSvgFiles(files, { productName = '', actionRule = null } = {}) {
@@ -617,6 +688,19 @@ export async function exportPriceZip({ svgFiles, priceRows, productName, actionR
         typography: exportTypography,
         warnings: processed.warnings,
       });
+
+      const pngOutputPath = pngPathForSvg(outputPath);
+      const pngBlob = await svgToPngBlob(processed.svgText);
+      zip.file(pngOutputPath, pngBlob);
+      results.push({
+        inputPath: templateFile.inputPath,
+        outputPath: pngOutputPath,
+        kind: 'PNG',
+        templateName: templateFile.templateName,
+        priceRow,
+        typography: exportTypography,
+        warnings: processed.warnings,
+      });
     }
   }
 
@@ -632,6 +716,7 @@ export async function exportPriceZip({ svgFiles, priceRows, productName, actionR
     svgCount: svgTemplateFiles.length,
     generatedCount: results.length,
     generatedSvgCount: results.filter((result) => result.kind === 'SVG').length,
+    generatedPngCount: results.filter((result) => result.kind === 'PNG').length,
     generatedStaticCount: results.filter((result) => result.kind === 'ASSET').length,
     warningCount: results.filter((result) => result.warnings.length).length,
     results,
