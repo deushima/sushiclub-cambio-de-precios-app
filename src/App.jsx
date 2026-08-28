@@ -513,6 +513,7 @@ export default function App() {
                     <span title={item.path}>{item.name}</span>
                     <small>
                       {item.templateName} / ${item.normalCount} / @{item.eminentCount}
+                      {item.unresolvedImageCount ? ` / ${item.unresolvedImageCount} imagenes no embebidas` : ''}
                     </small>
                   </div>
                 ))}

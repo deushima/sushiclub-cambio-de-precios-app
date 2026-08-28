@@ -249,9 +249,20 @@ function measurableRoot(doc) {
 
 export function inspectSvg(svgText) {
   const doc = parseSvg(svgText);
+  const ids = new Set(Array.from(doc.querySelectorAll('[id]')).map((element) => `#${element.id}`));
+  const unresolvedImageCount = Array.from(doc.querySelectorAll('use')).filter((element) => {
+    const href =
+      element.getAttribute('href') ||
+      element.getAttribute('xlink:href') ||
+      element.getAttributeNS('http://www.w3.org/1999/xlink', 'href') ||
+      '';
+    return /^#image/i.test(href) && !ids.has(href);
+  }).length;
+
   return {
     normalCount: selectablePlaceholders(doc, isNormalPlaceholder).length,
     eminentCount: selectablePlaceholders(doc, isEminentPlaceholder).length,
+    unresolvedImageCount,
   };
 }
 
@@ -272,6 +283,8 @@ export function replaceSvgPrices(svgText, priceRow, options = {}) {
   if (!eminentText) warnings.push('Sin precio Eminent.');
   if (!normalNodes.length) warnings.push('No se encontro placeholder $$$$.');
   if (!eminentNodes.length) warnings.push('No se encontro placeholder @@@@.');
+  const unresolvedImageCount = inspectSvg(svgText).unresolvedImageCount;
+  if (unresolvedImageCount) warnings.push(`${unresolvedImageCount} imagenes no embebidas en el SVG.`);
 
   ensureFontFace(root, typography);
   normalNodes.forEach((node) => centerAndFitPrice(node, normalText, findNearestPill(root, node), typography));
@@ -695,7 +708,8 @@ export async function analyzeSvgFiles(files, { productName = '', actionRule = nu
         path: item.inputPath,
         templateName: item.templateName,
         templateKey: item.templateKey,
-        ok: stats.normalCount > 0 && stats.eminentCount > 0,
+        ok: stats.normalCount > 0 && stats.eminentCount > 0 && stats.unresolvedImageCount === 0,
+        error: stats.unresolvedImageCount ? `${stats.unresolvedImageCount} imagenes no embebidas` : '',
         ...stats,
       });
     } catch (error) {
