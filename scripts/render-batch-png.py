@@ -151,8 +151,18 @@ def apply_price_typography(node):
         target.set("font-family", "Acumin Pro")
         target.set("font-weight", "600")
         target.set("font-style", "normal")
+        target.set("letter-spacing", "0")
     if text is not None:
         text.set("data-sushiclub-price", "true")
+
+
+def remove_price_filter_crop(node):
+    current = node.getparent()
+    while current is not None:
+        if current.get("filter"):
+            current.attrib.pop("filter", None)
+            return
+        current = current.getparent()
 
 
 def ensure_font_face(root, font_data_url):
@@ -206,18 +216,23 @@ def absolutize_linked_assets(root, base_dir):
 
 
 def center_and_fit_price(node, price_text, pill):
+    original_marker = token_text("".join(node.itertext()))
     clear_children(node)
     node.text = price_text
     apply_price_typography(node)
-
-    if not pill:
-        return
+    remove_price_filter_crop(node)
 
     text = text_element_for(node)
-    max_width = max(1, pill["width"] - max(38, pill["width"] * 0.18))
-    if text is not None:
-        text.set("text-anchor", "middle")
-    node.set("x", f"{pill['center_x']:.3f}".rstrip("0").rstrip("."))
+    if pill:
+        if text is not None:
+            text.set("text-anchor", "middle")
+        max_width = max(1, pill["width"] - max(54, pill["width"] * 0.28))
+        node.set("x", f"{pill['center_x']:.3f}".rstrip("0").rstrip("."))
+    else:
+        base_size = node_number_attr(node, "font-size") or 42
+        placeholder_width = estimate_text_width(original_marker, base_size)
+        marker_factor = 1.55 if original_marker.startswith("$") else 2.1
+        max_width = max(1, placeholder_width * marker_factor)
     node.attrib.pop("textLength", None)
     node.attrib.pop("lengthAdjust", None)
 
@@ -261,7 +276,7 @@ def svg_size(root):
 
 
 def replace_svg_prices(svg_path, normal_text, eminent_text, font_data_url):
-    parser = etree.XMLParser(recover=True, remove_blank_text=False)
+    parser = etree.XMLParser(recover=True, remove_blank_text=False, huge_tree=True)
     tree = etree.parse(str(svg_path), parser)
     root = tree.getroot()
     ensure_font_face(root, font_data_url)
@@ -346,6 +361,22 @@ def main():
         for action in plan["actions"]:
             generated_for_preview = []
             for job in action["jobs"]:
+                if "copySourcePath" in job:
+                    source = Path(job["copySourcePath"])
+                    output = output_root / job["outputPath"]
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, output)
+                    generated_for_preview.append(output)
+                    rows.append({
+                        "accion": action["name"],
+                        "archivo": str(output.relative_to(output_root)),
+                        "locales": " / ".join(job["branches"]),
+                        "plantilla": job["templateName"],
+                        "precio_normal": job["normalText"],
+                        "precio_eminent": job["eminentText"],
+                        "avisos": "COPIADO PNG BASE",
+                    })
+                    continue
                 source = Path(job["sourcePath"])
                 output = output_root / job["outputPath"]
                 if output.exists() and output.stat().st_size > 0:

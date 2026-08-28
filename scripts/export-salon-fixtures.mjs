@@ -12,6 +12,7 @@ const OUTPUT_ROOT = path.join(INPUT_ROOT, `_EXPORTADOS_APP_${timestamp()}`);
 const CHROME_PATH = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const PYTHON_PATH = 'C:/Users/Ivan Rodriguez/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe';
 const FONT_PATH = path.join(REPO_ROOT, 'src/public/fonts/acumin/Acumin Pro Semibold.otf');
+const ARGS = new Set(process.argv.slice(2));
 
 const ACTIONS = [
   {
@@ -49,6 +50,8 @@ const ACTIONS = [
   },
 ];
 
+const SELECTED_ACTIONS = ARGS.has('--salon-only') ? ACTIONS.slice(0, 4) : ACTIONS;
+
 function timestamp() {
   const date = new Date();
   const pad = (value) => String(value).padStart(2, '0');
@@ -81,6 +84,28 @@ function walkFiles(dir) {
     if (!entry.name.toLowerCase().endsWith('.svg')) return [];
     return [fullPath];
   });
+}
+
+function walkPngFiles(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const normalized = normalizeSearch(entry.name);
+      if (normalized === 'exports' || normalized === 'export') return [];
+      return walkPngFiles(fullPath);
+    }
+    if (!entry.name.toLowerCase().endsWith('.png')) return [];
+    return [fullPath];
+  });
+}
+
+function svgHasBrokenImageRefs(sourcePath) {
+  const text = fs.readFileSync(sourcePath, 'utf8');
+  const imageIds = new Set(
+    Array.from(text.matchAll(/<image\b[^>]*\sid="([^"]+)"/gi), (match) => `#${match[1]}`)
+  );
+  const refs = Array.from(text.matchAll(/(?:xlink:href|href)="#(image[^"]+)"/g), (match) => `#${match[1]}`);
+  return refs.some((ref) => !imageIds.has(ref));
 }
 
 function splitRelative(filePath, root) {
@@ -175,7 +200,7 @@ const plan = {
   actions: [],
 };
 
-for (const action of ACTIONS) {
+for (const action of SELECTED_ACTIONS) {
   const product = workbook.products.find((item) => productMatches(item, action));
   if (!product) {
     console.warn(`Sin producto para ${action.name}`);
@@ -190,11 +215,28 @@ for (const action of ACTIONS) {
   const rows = priceRowsForProduct(product, 'salon', 'branches')
     .map((row) => ({ ...row, templateName: templateForRow(row, actionRule) }))
     .filter((row) => row.normal && row.eminent);
-  const templates = walkFiles(action.folder).map((sourcePath) => ({
-    sourcePath,
-    ...assignTemplate(splitRelative(sourcePath, action.folder), actionRule),
-  }));
+  const skippedBrokenSvg = [];
+  const templates = walkFiles(action.folder)
+    .filter((sourcePath) => {
+      const broken = svgHasBrokenImageRefs(sourcePath);
+      if (broken && ARGS.has('--skip-broken')) {
+        skippedBrokenSvg.push(sourcePath);
+        return false;
+      }
+      return true;
+    })
+    .map((sourcePath) => ({
+      sourcePath,
+      ...assignTemplate(splitRelative(sourcePath, action.folder), actionRule),
+    }));
+  const staticPngTemplates = ARGS.has('--include-static')
+    ? walkPngFiles(action.folder).map((copySourcePath) => ({
+        copySourcePath,
+        ...assignTemplate(splitRelative(copySourcePath, action.folder), actionRule),
+      }))
+    : [];
   const availableTemplateKeys = new Set(templates.map((template) => template.templateKey));
+  staticPngTemplates.forEach((template) => availableTemplateKeys.add(template.templateKey));
   const jobs = [];
 
   for (const template of templates) {
@@ -211,12 +253,28 @@ for (const action of ACTIONS) {
     }
   }
 
+  for (const template of staticPngTemplates) {
+    const groups = rowGroupsForTargets(targetsForTemplate(template, rows, actionRule, availableTemplateKeys));
+    for (const group of groups) {
+      jobs.push({
+        copySourcePath: template.copySourcePath,
+        outputPath: outputPngPath(action.name, group.folderName, template.pieceParts),
+        branches: group.priceRows.map((row) => row.branchName),
+        templateName: template.templateName,
+        normalText: formatPrice(group.priceRow.normal),
+        eminentText: formatPrice(group.priceRow.eminent),
+      });
+    }
+  }
+
   plan.actions.push({
     name: action.name,
     safeName: slugFolder(action.name).replace(/\s+/g, '-').toLowerCase(),
     productName: product.name,
     folder: action.folder,
     sourceSvgCount: templates.length,
+    skippedBrokenSvg: skippedBrokenSvg.map((file) => path.relative(action.folder, file).split(path.sep).join('/')),
+    staticPngCount: staticPngTemplates.length,
     branchCount: rows.length,
     groupedFolderCount: new Set(jobs.map((job) => job.outputPath.split('/')[1])).size,
     jobs,
@@ -226,9 +284,16 @@ for (const action of ACTIONS) {
 fs.mkdirSync(OUTPUT_ROOT, { recursive: true });
 const planPath = path.join(OUTPUT_ROOT, '_plan_exportacion.json');
 fs.writeFileSync(planPath, JSON.stringify(plan, null, 2), 'utf8');
+fs.writeFileSync(
+  path.join(OUTPUT_ROOT, '_svg_pendientes_reexportar.txt'),
+  plan.actions
+    .flatMap((action) => action.skippedBrokenSvg.map((file) => `${action.name}/${file}`))
+    .join('\n'),
+  'utf8'
+);
 
 for (const action of plan.actions) {
-  console.log(`${action.name}: ${action.sourceSvgCount} SVG, ${action.branchCount} locales, ${action.groupedFolderCount} carpetas, ${action.jobs.length} PNG`);
+  console.log(`${action.name}: ${action.sourceSvgCount} SVG OK, ${action.staticPngCount} PNG base, ${action.skippedBrokenSvg.length} SVG pendientes, ${action.branchCount} locales, ${action.groupedFolderCount} carpetas, ${action.jobs.length} PNG`);
 }
 
 const result = spawnSync(PYTHON_PATH, [path.join(REPO_ROOT, 'scripts/render-batch-png.py'), planPath], {

@@ -151,9 +151,22 @@ function applyPriceTypography(node, typography) {
   text.setAttribute('font-family', typography.family);
   text.setAttribute('font-weight', String(typography.cssWeight));
   text.setAttribute('font-style', typography.style);
+  text.setAttribute('letter-spacing', '0');
   node.setAttribute('font-family', typography.family);
   node.setAttribute('font-weight', String(typography.cssWeight));
   node.setAttribute('font-style', typography.style);
+  node.setAttribute('letter-spacing', '0');
+}
+
+function removePriceFilterCrop(node) {
+  let current = node.parentElement;
+  while (current) {
+    if (current.hasAttribute('filter')) {
+      current.removeAttribute('filter');
+      return;
+    }
+    current = current.parentElement;
+  }
 }
 
 function currentFontSize(node) {
@@ -161,23 +174,31 @@ function currentFontSize(node) {
 }
 
 function centerAndFitPrice(node, priceText, pill, typography) {
+  const originalMarker = tokenText(node.textContent || '');
   node.textContent = priceText || '';
   applyPriceTypography(node, typography);
-
-  if (!pill) return;
+  removePriceFilterCrop(node);
 
   const text = textElementFor(node);
-  const maxWidth = Math.max(1, pill.width - Math.max(38, pill.width * 0.18));
 
-  text?.setAttribute('text-anchor', 'middle');
-  node.setAttribute('x', String(Number(pill.centerX.toFixed(3))));
+  const baseFontSize = currentFontSize(node);
+  const maxWidth = pill
+    ? Math.max(1, pill.width - Math.max(54, pill.width * 0.28))
+    : Math.max(
+        1,
+        estimateTextWidth(originalMarker, baseFontSize) * (originalMarker.startsWith('$') ? 1.55 : 2.1),
+      );
+
+  if (pill) {
+    text?.setAttribute('text-anchor', 'middle');
+    node.setAttribute('x', String(Number(pill.centerX.toFixed(3))));
+  }
   node.removeAttribute('textLength');
   node.removeAttribute('lengthAdjust');
 
   const length = visibleTextLength(node, priceText);
   if (!length || length <= maxWidth) return;
 
-  const baseFontSize = currentFontSize(node);
   const scale = Math.max(0.62, Math.min(1, maxWidth / length));
   setFontSize(node, baseFontSize * scale);
 
