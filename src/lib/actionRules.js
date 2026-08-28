@@ -5,6 +5,7 @@ export const ACTION_PRESETS = [
     id: '2-tiempos',
     label: '2 Tiempos',
     productIncludes: ['2 tiempos'],
+    folderNames: ['2 Tiempos'],
     exact: true,
     exceptionTemplates: ['PILAR', 'URQUIZA'],
   },
@@ -12,6 +13,7 @@ export const ACTION_PRESETS = [
     id: '3-tiempos',
     label: '3 Tiempos',
     productIncludes: ['3 tiempos'],
+    folderNames: ['3 Tiempos'],
     exact: true,
     exceptionTemplates: [],
   },
@@ -19,6 +21,7 @@ export const ACTION_PRESETS = [
     id: '3-tiempos-plant-based',
     label: '3 Tiempos Plant-Based',
     productIncludes: ['3 tiempos plant-based'],
+    folderNames: ['3 Tiempos Plant-Based'],
     exact: true,
     exceptionTemplates: [],
   },
@@ -26,6 +29,7 @@ export const ACTION_PRESETS = [
     id: 'menu-club-ejecutivo',
     label: 'Club Ejecutivo',
     productIncludes: ['menu club ejecutivo'],
+    folderNames: ['Menu Club Ejecutivo', 'Menú Club Ejecutivo'],
     exact: false,
     exceptionTemplates: ['BAHIA BLANCA'],
   },
@@ -106,4 +110,15 @@ export function templateForRow(row, actionRule) {
 
 export function templateKeysForRule(actionRule) {
   return ['GENERAL', ...(actionRule?.exceptionTemplates ?? [])];
+}
+
+export function actionFolderKeysForRule(actionRule, productName = '') {
+  const labels = [
+    ...(actionRule?.folderNames ?? []),
+    actionRule?.label,
+    ...(actionRule?.productIncludes ?? []),
+    productName,
+  ];
+
+  return new Set(labels.map(normalizeKey).filter(Boolean));
 }

@@ -5,6 +5,7 @@ import {
   Download,
   FileSpreadsheet,
   FolderOpen,
+  Images,
   Search,
   Sparkles,
   Type,
@@ -12,7 +13,7 @@ import {
 } from 'lucide-react';
 import { parsePriceWorkbook, priceRowsForProduct } from './lib/priceWorkbook.js';
 import { actionOptionsForProducts, ruleForProduct, templateForRow, templateKeysForRule } from './lib/actionRules.js';
-import { analyzeSvgFiles, exportPriceZip, summarizeTemplatePlan } from './lib/svgBatch.js';
+import { analyzeSvgFiles, buildPricePreviews, exportPriceZip, summarizeTemplatePlan } from './lib/svgBatch.js';
 import {
   DEFAULT_PRICE_TYPOGRAPHY,
   PRICE_FONT_FAMILIES,
@@ -35,6 +36,10 @@ function StatusPill({ tone = 'neutral', children }) {
   return <span className={`pill pill-${tone}`}>{children}</span>;
 }
 
+function revokePreviewItems(items) {
+  items.forEach((item) => item.pieces.forEach((piece) => URL.revokeObjectURL(piece.url)));
+}
+
 export default function App() {
   const [workbook, setWorkbook] = useState(null);
   const [workbookError, setWorkbookError] = useState('');
@@ -48,6 +53,11 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [lastExport, setLastExport] = useState(null);
   const [exportTab, setExportTab] = useState('files');
+  const [outputFormat, setOutputFormat] = useState('png');
+  const [includeStaticAssets, setIncludeStaticAssets] = useState(false);
+  const [previewItems, setPreviewItems] = useState([]);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState('');
   const [priceTypography, setPriceTypography] = useState(DEFAULT_PRICE_TYPOGRAPHY);
 
   const products = workbook?.products ?? [];
@@ -95,6 +105,21 @@ export default function App() {
     });
   }, [svgFiles, selectedRows, selectedProduct, actionRule]);
 
+  const outputCounts = useMemo(() => {
+    const includeSvg = outputFormat === 'svg' || outputFormat === 'both';
+    const includePng = outputFormat === 'png' || outputFormat === 'both';
+    const generatedSvgCount = includeSvg ? svgPlan.generatedSvgCount : 0;
+    const generatedPngCount = includePng ? svgPlan.generatedPngCount : 0;
+    const generatedStaticCount = includePng && includeStaticAssets ? svgPlan.generatedStaticCount : 0;
+
+    return {
+      generatedSvgCount,
+      generatedPngCount,
+      generatedStaticCount,
+      generatedCount: generatedSvgCount + generatedPngCount + generatedStaticCount,
+    };
+  }, [includeStaticAssets, outputFormat, svgPlan]);
+
   useEffect(() => {
     let mounted = true;
 
@@ -117,6 +142,47 @@ export default function App() {
       mounted = false;
     };
   }, [svgFiles, selectedProduct, actionRule]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function refreshPreviews() {
+      setPreviewError('');
+      setIsPreviewing(Boolean(svgFiles.length && selectedRows.length));
+      setPreviewItems([]);
+
+      if (!svgFiles.length || !selectedRows.length || svgPlan.missingTemplates.length) {
+        setIsPreviewing(false);
+        return;
+      }
+
+      try {
+        const items = await buildPricePreviews({
+          svgFiles,
+          priceRows: selectedRows,
+          productName: selectedProduct?.name ?? '',
+          actionRule,
+          priceTypography: resolvedTypography,
+        });
+
+        if (mounted) setPreviewItems(items);
+        else revokePreviewItems(items);
+      } catch (error) {
+        if (mounted) setPreviewError(error.message);
+      } finally {
+        if (mounted) setIsPreviewing(false);
+      }
+    }
+
+    refreshPreviews();
+    return () => {
+      mounted = false;
+    };
+  }, [svgFiles, selectedRows, selectedProduct, actionRule, resolvedTypography, svgPlan.missingTemplates]);
+
+  useEffect(() => {
+    return () => revokePreviewItems(previewItems);
+  }, [previewItems]);
 
   async function handleWorkbook(event) {
     const file = event.target.files?.[0];
@@ -176,6 +242,8 @@ export default function App() {
         productName: selectedProduct?.name,
         actionRule,
         priceTypography: resolvedTypography,
+        outputFormat,
+        includeStaticAssets,
       });
       setLastExport({ type: 'success', ...result });
     } catch (error) {
@@ -194,6 +262,9 @@ export default function App() {
     svgPlan.generatedCount > 0 &&
     !svgPlan.missingTemplates.length &&
     !isExporting;
+  const exportPanelTitle = exportTab === 'files' ? 'Archivos' : exportTab === 'download' ? 'Descarga' : 'Tipografia';
+  const exportPanelIcon =
+    exportTab === 'files' ? <FolderOpen size={20} /> : exportTab === 'download' ? <Download size={20} /> : <Type size={20} />;
 
   return (
     <main className="app-shell">
@@ -324,8 +395,8 @@ export default function App() {
           <div className="price-summary">
             {statLabel(selectedRows.length || '-', 'seleccionados')}
             {statLabel(priceRows.filter((row) => row.normal && row.eminent).length || '-', 'con 2 precios')}
-            {statLabel(svgPlan.generatedPngCount || '-', 'png')}
-            {statLabel(svgPlan.generatedCount || '-', 'salidas')}
+            {statLabel(outputCounts.generatedPngCount || '-', 'png')}
+            {statLabel(outputCounts.generatedCount || '-', 'descarga')}
           </div>
 
           <div className="table-wrap">
@@ -376,8 +447,8 @@ export default function App() {
 
         <aside className="panel export-panel">
           <div className="panel-title">
-            {exportTab === 'files' ? <FolderOpen size={20} /> : <Type size={20} />}
-            <h2>{exportTab === 'files' ? 'Archivos' : 'Tipografia'}</h2>
+            {exportPanelIcon}
+            <h2>{exportPanelTitle}</h2>
           </div>
 
           <div className="panel-tabs" role="tablist" aria-label="Exportacion">
@@ -387,6 +458,13 @@ export default function App() {
               onClick={() => setExportTab('files')}
             >
               Archivos
+            </button>
+            <button
+              type="button"
+              className={exportTab === 'download' ? 'active' : ''}
+              onClick={() => setExportTab('download')}
+            >
+              Descarga
             </button>
             <button
               type="button"
@@ -437,6 +515,52 @@ export default function App() {
                 {svgAnalysis.length > 40 && <p className="empty">+{svgAnalysis.length - 40} mas</p>}
               </div>
             </>
+          ) : exportTab === 'download' ? (
+            <div className="download-panel">
+              <div className="format-options" aria-label="Formato de descarga">
+                <button
+                  type="button"
+                  className={outputFormat === 'png' ? 'active' : ''}
+                  onClick={() => setOutputFormat('png')}
+                >
+                  Solo PNG
+                </button>
+                <button
+                  type="button"
+                  className={outputFormat === 'svg' ? 'active' : ''}
+                  onClick={() => setOutputFormat('svg')}
+                >
+                  Solo SVG
+                </button>
+                <button
+                  type="button"
+                  className={outputFormat === 'both' ? 'active' : ''}
+                  onClick={() => setOutputFormat('both')}
+                >
+                  PNG + SVG
+                </button>
+              </div>
+
+              <div className="download-summary">
+                {statLabel(outputCounts.generatedPngCount || '-', 'png')}
+                {statLabel(outputCounts.generatedSvgCount || '-', 'svg')}
+                {statLabel(outputCounts.generatedStaticCount || '-', 'assets')}
+              </div>
+
+              <label className={outputFormat === 'svg' ? 'check-row disabled' : 'check-row'}>
+                <input
+                  type="checkbox"
+                  checked={includeStaticAssets}
+                  disabled={outputFormat === 'svg'}
+                  onChange={(event) => setIncludeStaticAssets(event.target.checked)}
+                />
+                <span>Incluir PNG ya existentes</span>
+              </label>
+
+              <p className="hint">
+                Por defecto baja solo las imagenes PNG generadas desde los SVG para que el ZIP sea mas liviano.
+              </p>
+            </div>
           ) : (
             <div className="typography-panel">
               <style>
@@ -511,7 +635,7 @@ export default function App() {
 
           <button type="button" className="primary-button" disabled={!canExport} onClick={handleExport}>
             <Download size={18} />
-            <span>{isExporting ? 'Exportando' : 'Exportar ZIP'}</span>
+            <span>{isExporting ? 'Preparando ZIP' : 'Descargar contenido'}</span>
           </button>
 
           {lastExport?.type === 'success' && (
@@ -532,6 +656,53 @@ export default function App() {
             </div>
           )}
         </aside>
+      </section>
+
+      <section className="panel preview-panel">
+        <div className="panel-title panel-title-row">
+          <div>
+            <Images size={20} />
+            <h2>Vista previa</h2>
+          </div>
+          <span className="preview-counter">
+            {previewItems.length ? `${previewItems.length} locales` : isPreviewing ? 'Preparando' : 'Sin preview'}
+          </span>
+        </div>
+
+        {previewError && (
+          <div className="notice notice-error">
+            <AlertTriangle size={17} />
+            <span>{previewError}</span>
+          </div>
+        )}
+
+        {!previewError && !isPreviewing && !previewItems.length && (
+          <p className="empty">
+            Carga el Excel y la carpeta de SVG para ver una muestra de las pildoras ya cambiadas.
+          </p>
+        )}
+
+        {isPreviewing && <p className="empty">Generando miniaturas...</p>}
+
+        <div className="preview-grid">
+          {previewItems.map((item) => (
+            <article className="preview-card" key={item.id}>
+              <div className="preview-card-head">
+                <h3>{item.branchName}</h3>
+                <small>
+                  {item.normalText} / {item.eminentText} / {item.templateName}
+                </small>
+              </div>
+
+              {item.pieces.map((piece) => (
+                <div className="preview-piece" key={piece.url}>
+                  <span>{piece.label}</span>
+                  <img src={piece.url} alt={`${item.branchName} ${piece.label}`} loading="lazy" />
+                </div>
+              ))}
+            </article>
+          ))}
+        </div>
       </section>
     </main>
   );

@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import FileSaver from 'file-saver';
 import { cleanText, formatPrice, normalizeKey, slugFolder } from './text.js';
-import { templateKey, templateLabel } from './actionRules.js';
+import { actionFolderKeysForRule, templateKey, templateLabel } from './actionRules.js';
 import { resolvePriceTypography } from './priceTypography.js';
 
 const { saveAs } = FileSaver;
@@ -313,22 +313,32 @@ function isSvgFile(file) {
 
 function isIgnoredFile(file) {
   const name = file.name.toLowerCase();
-  return !file.name || name === '.ds_store' || name === 'thumbs.db';
+  const pathKeys = splitPath(file).map(normalizeKey);
+  return (
+    !file.name ||
+    name === '.ds_store' ||
+    name === 'thumbs.db' ||
+    name.startsWith('_') ||
+    pathKeys.includes('exports') ||
+    pathKeys.includes('export')
+  );
 }
 
 function safeZipPath(parts) {
   return parts.map(slugFolder).filter(Boolean).join('/');
 }
 
-function actionPartIndex(parts, productName) {
-  const actionKey = normalizeKey(productName);
-  if (!actionKey) return -1;
-  return parts.findIndex((part) => normalizeKey(part.replace(/\.svg$/i, '')) === actionKey);
+function actionPartIndex(parts, productName, actionRule) {
+  const actionKeys = actionFolderKeysForRule(actionRule, productName);
+  if (!actionKeys.size) return -1;
+
+  const directories = parts.slice(0, -1);
+  return directories.findIndex((part) => actionKeys.has(normalizeKey(part)));
 }
 
-function relativeActionParts(file, commonRootName, productName) {
+function relativeActionParts(file, commonRootName, productName, actionRule) {
   const stripped = stripCommonRoot(splitPath(file), commonRootName);
-  const index = actionPartIndex(stripped, productName);
+  const index = actionPartIndex(stripped, productName, actionRule);
   return index >= 0 ? stripped.slice(index + 1) : stripped;
 }
 
@@ -371,22 +381,22 @@ function assignTemplate(parts, actionRule) {
   };
 }
 
-function isActionSpecificUpload(files, commonRootName, productName) {
-  return files.some((file) => actionPartIndex(stripCommonRoot(splitPath(file), commonRootName), productName) >= 0);
+function isActionSpecificUpload(files, commonRootName, productName, actionRule) {
+  return files.some((file) => actionPartIndex(stripCommonRoot(splitPath(file), commonRootName), productName, actionRule) >= 0);
 }
 
 function planAllTemplateFiles(uploadedFiles, productName, actionRule) {
   const files = uploadedFiles.filter((file) => !isIgnoredFile(file));
   const root = commonRoot(files);
-  const onlySelectedAction = isActionSpecificUpload(files, root, productName);
+  const onlySelectedAction = isActionSpecificUpload(files, root, productName, actionRule);
 
   return files
     .map((file) => {
       const stripped = stripCommonRoot(splitPath(file), root);
-      const actionIndex = actionPartIndex(stripped, productName);
+      const actionIndex = actionPartIndex(stripped, productName, actionRule);
       if (onlySelectedAction && actionIndex < 0) return null;
 
-      const actionParts = actionIndex >= 0 ? stripped.slice(actionIndex + 1) : relativeActionParts(file, root, productName);
+      const actionParts = actionIndex >= 0 ? stripped.slice(actionIndex + 1) : relativeActionParts(file, root, productName, actionRule);
       const assignment = assignTemplate(actionParts.length ? actionParts : [file.name], actionRule);
 
       return {
@@ -595,6 +605,13 @@ function pngPathForSvg(outputPath) {
   return outputPath.replace(/\.svg$/i, '.png');
 }
 
+function outputFormatFlags(outputFormat = 'png') {
+  return {
+    includeSvg: outputFormat === 'svg' || outputFormat === 'both',
+    includePng: outputFormat === 'png' || outputFormat === 'both',
+  };
+}
+
 export async function analyzeSvgFiles(files, { productName = '', actionRule = null } = {}) {
   const svgFiles = files.filter(isSvgFile);
   const planned = planTemplateFiles(svgFiles, productName, actionRule);
@@ -630,12 +647,78 @@ export async function analyzeSvgFiles(files, { productName = '', actionRule = nu
   return results;
 }
 
-export async function exportPriceZip({ svgFiles, priceRows, productName, actionRule, priceTypography }) {
+export async function buildPricePreviews({
+  svgFiles,
+  priceRows,
+  productName,
+  actionRule,
+  priceTypography,
+  rowLimit = 32,
+  piecesPerRow = 2,
+}) {
+  if (typeof URL === 'undefined' || typeof Blob === 'undefined') return [];
+
+  const files = svgFiles.filter((file) => !isIgnoredFile(file));
+  const templateFiles = planTemplateFiles(files, productName, actionRule);
+  const availableTemplateKeys = new Set(templateFiles.map((file) => file.templateKey));
+  const rows = priceRows.filter((row) => row.normal && row.eminent).slice(0, rowLimit);
+  const exportTypography = await resolveExportTypography(priceTypography);
+  const svgTextCache = new Map();
+  const previews = [];
+
+  for (const priceRow of rows) {
+    const matchingTemplates = templateFiles
+      .filter((templateFile) => targetsForTemplate(templateFile, [priceRow], actionRule, availableTemplateKeys).length)
+      .slice(0, piecesPerRow);
+
+    if (!matchingTemplates.length) continue;
+
+    const pieces = [];
+    for (const templateFile of matchingTemplates) {
+      let svgText = svgTextCache.get(templateFile.inputPath);
+      if (!svgText) {
+        svgText = await templateFile.file.text();
+        svgTextCache.set(templateFile.inputPath, svgText);
+      }
+
+      const processed = replaceSvgPrices(svgText, priceRow, { priceTypography: exportTypography });
+      const url = URL.createObjectURL(new Blob([processed.svgText], { type: 'image/svg+xml;charset=utf-8' }));
+      pieces.push({
+        url,
+        label: `Pieza ${pieces.length + 1}`,
+        warnings: processed.warnings,
+      });
+    }
+
+    previews.push({
+      id: priceRow.id,
+      branchName: priceRow.branchName,
+      groupName: priceRow.groupName,
+      templateName: priceRow.templateName,
+      normalText: formatPrice(priceRow.normal),
+      eminentText: formatPrice(priceRow.eminent),
+      pieces,
+    });
+  }
+
+  return previews;
+}
+
+export async function exportPriceZip({
+  svgFiles,
+  priceRows,
+  productName,
+  actionRule,
+  priceTypography,
+  outputFormat = 'png',
+  includeStaticAssets = false,
+}) {
   const files = svgFiles.filter((file) => !isIgnoredFile(file));
   const templateFiles = planAllTemplateFiles(files, productName, actionRule);
   const svgTemplateFiles = templateFiles.filter((item) => isSvgFile(item.file));
   if (!svgTemplateFiles.length) throw new Error('No hay archivos SVG para exportar.');
   if (!priceRows.length) throw new Error('No hay locales seleccionados.');
+  const { includeSvg, includePng } = outputFormatFlags(outputFormat);
 
   const availableTemplateKeys = new Set(svgTemplateFiles.map((file) => file.templateKey));
   const missing = summarizeTemplatePlan({ svgFiles: files, priceRows, productName, actionRule }).missingTemplates;
@@ -652,6 +735,7 @@ export async function exportPriceZip({ svgFiles, priceRows, productName, actionR
     if (!targets.length) continue;
 
     if (!isSvgFile(templateFile.file)) {
+      if (!includePng || !includeStaticAssets) continue;
       const assetBuffer = await templateFile.file.arrayBuffer();
       for (const priceRow of targets) {
         const outputParts = [priceRow.folderName, ...templateFile.relativeParts];
@@ -678,31 +762,37 @@ export async function exportPriceZip({ svgFiles, priceRows, productName, actionR
       const outputPath = safeZipPath(outputParts);
       const processed = replaceSvgPrices(svgText, priceRow, { priceTypography: exportTypography });
 
-      zip.file(outputPath, processed.svgText);
-      results.push({
-        inputPath: templateFile.inputPath,
-        outputPath,
-        kind: 'SVG',
-        templateName: templateFile.templateName,
-        priceRow,
-        typography: exportTypography,
-        warnings: processed.warnings,
-      });
+      if (includeSvg) {
+        zip.file(outputPath, processed.svgText);
+        results.push({
+          inputPath: templateFile.inputPath,
+          outputPath,
+          kind: 'SVG',
+          templateName: templateFile.templateName,
+          priceRow,
+          typography: exportTypography,
+          warnings: processed.warnings,
+        });
+      }
 
-      const pngOutputPath = pngPathForSvg(outputPath);
-      const pngBlob = await svgToPngBlob(processed.svgText);
-      zip.file(pngOutputPath, pngBlob);
-      results.push({
-        inputPath: templateFile.inputPath,
-        outputPath: pngOutputPath,
-        kind: 'PNG',
-        templateName: templateFile.templateName,
-        priceRow,
-        typography: exportTypography,
-        warnings: processed.warnings,
-      });
+      if (includePng) {
+        const pngOutputPath = pngPathForSvg(outputPath);
+        const pngBlob = await svgToPngBlob(processed.svgText);
+        zip.file(pngOutputPath, pngBlob);
+        results.push({
+          inputPath: templateFile.inputPath,
+          outputPath: pngOutputPath,
+          kind: 'PNG',
+          templateName: templateFile.templateName,
+          priceRow,
+          typography: exportTypography,
+          warnings: processed.warnings,
+        });
+      }
     }
   }
+
+  if (!results.length) throw new Error('El modo elegido no genero archivos para descargar.');
 
   const manifest = await buildManifestRows(results);
   zip.file('_reporte_precios.csv', manifest);
