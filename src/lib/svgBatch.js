@@ -1,6 +1,9 @@
 import JSZip from 'jszip';
-import { saveAs } from 'file-saver';
+import FileSaver from 'file-saver';
 import { cleanText, formatPrice, normalizeKey, slugFolder } from './text.js';
+import { templateKey, templateLabel } from './actionRules.js';
+
+const { saveAs } = FileSaver;
 
 function tokenText(value) {
   return cleanText(value).replace(/[\s\u00a0]/g, '');
@@ -93,29 +96,138 @@ function commonRoot(files) {
   return files.every((file) => splitPath(file)[0] === first) ? first : '';
 }
 
-function findTargetFromPath(parts, priceRows) {
-  const pathKeys = parts.map((part) => normalizeKey(part.replace(/\.svg$/i, '')));
-  return (
-    priceRows.find((row) => pathKeys.some((key) => key === row.branchKey || key === normalizeKey(row.folderName))) ??
-    null
-  );
-}
-
-function removeTargetSegment(parts, target) {
-  const targetKeys = new Set([target.branchKey, normalizeKey(target.folderName)]);
-  const index = parts.findIndex((part) => targetKeys.has(normalizeKey(part.replace(/\.svg$/i, ''))));
-  if (index < 0) return parts;
-  return [...parts.slice(0, index), ...parts.slice(index + 1)];
-}
-
 function safeZipPath(parts) {
   return parts.map(slugFolder).filter(Boolean).join('/');
 }
 
+function actionPartIndex(parts, productName) {
+  const actionKey = normalizeKey(productName);
+  if (!actionKey) return -1;
+  return parts.findIndex((part) => normalizeKey(part.replace(/\.svg$/i, '')) === actionKey);
+}
+
+function relativeActionParts(file, commonRootName, productName) {
+  const stripped = stripCommonRoot(splitPath(file), commonRootName);
+  const index = actionPartIndex(stripped, productName);
+  return index >= 0 ? stripped.slice(index + 1) : stripped;
+}
+
+function knownTemplateMap(actionRule) {
+  const pairs = [
+    ['GENERAL', 'GENERAL'],
+    ...((actionRule?.exceptionTemplates ?? []).map((name) => [name, name])),
+  ];
+
+  return new Map(pairs.map(([key, label]) => [templateKey(key), templateLabel(label)]));
+}
+
+function assignTemplate(parts, actionRule) {
+  const fileName = parts.at(-1) ?? '';
+  const directories = parts.slice(0, -1);
+  const known = knownTemplateMap(actionRule);
+
+  if (!directories.length) {
+    return {
+      templateName: 'GENERAL',
+      templateKey: templateKey('GENERAL'),
+      relativeParts: [fileName],
+    };
+  }
+
+  const first = directories[0];
+  const firstKey = templateKey(first);
+  if (known.has(firstKey)) {
+    return {
+      templateName: known.get(firstKey),
+      templateKey: firstKey,
+      relativeParts: [...directories.slice(1), fileName],
+    };
+  }
+
+  return {
+    templateName: 'GENERAL',
+    templateKey: templateKey('GENERAL'),
+    relativeParts: parts,
+  };
+}
+
+function isActionSpecificUpload(svgFiles, commonRootName, productName) {
+  return svgFiles.some((file) => actionPartIndex(stripCommonRoot(splitPath(file), commonRootName), productName) >= 0);
+}
+
+export function planTemplateFiles(svgFiles, productName, actionRule) {
+  const files = svgFiles.filter((file) => file.name.toLowerCase().endsWith('.svg'));
+  const root = commonRoot(files);
+  const onlySelectedAction = isActionSpecificUpload(files, root, productName);
+
+  return files
+    .map((file) => {
+      const stripped = stripCommonRoot(splitPath(file), root);
+      const actionIndex = actionPartIndex(stripped, productName);
+      if (onlySelectedAction && actionIndex < 0) return null;
+
+      const actionParts = actionIndex >= 0 ? stripped.slice(actionIndex + 1) : relativeActionParts(file, root, productName);
+      const assignment = assignTemplate(actionParts.length ? actionParts : [file.name], actionRule);
+
+      return {
+        file,
+        inputPath: file.webkitRelativePath || file.name,
+        actionParts: actionParts.length ? actionParts : [file.name],
+        ...assignment,
+      };
+    })
+    .filter(Boolean);
+}
+
+function targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys) {
+  const generalKey = templateKey('GENERAL');
+  const exceptionKeys = new Set((actionRule?.exceptionTemplates ?? []).map(templateKey));
+
+  if (templateFile.templateKey === generalKey) {
+    return priceRows.filter((row) => !exceptionKeys.has(row.branchKey));
+  }
+
+  if (!availableTemplateKeys.has(templateFile.templateKey)) {
+    return [];
+  }
+
+  return priceRows.filter((row) => row.branchKey === templateFile.templateKey);
+}
+
+export function summarizeTemplatePlan({ svgFiles, priceRows, productName, actionRule }) {
+  const templateFiles = planTemplateFiles(svgFiles, productName, actionRule);
+  const availableTemplateKeys = new Set(templateFiles.map((file) => file.templateKey));
+  const templateCounts = new Map();
+  const missingTemplates = [];
+  const generatedCount = templateFiles.reduce((sum, templateFile) => {
+    const count = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys).length;
+    templateCounts.set(templateFile.templateName, (templateCounts.get(templateFile.templateName) ?? 0) + 1);
+    return sum + count;
+  }, 0);
+  const generalKey = templateKey('GENERAL');
+  const exceptionKeys = new Set((actionRule?.exceptionTemplates ?? []).map(templateKey));
+  const hasGeneralTarget = priceRows.some((row) => !exceptionKeys.has(row.branchKey));
+  if (hasGeneralTarget && !availableTemplateKeys.has(generalKey)) missingTemplates.push('GENERAL');
+
+  (actionRule?.exceptionTemplates ?? []).forEach((exception) => {
+    const key = templateKey(exception);
+    const hasTarget = priceRows.some((row) => row.branchKey === key);
+    if (hasTarget && !availableTemplateKeys.has(key)) missingTemplates.push(exception);
+  });
+
+  return {
+    templateFiles,
+    templateCounts: Array.from(templateCounts, ([name, count]) => ({ name, count })),
+    missingTemplates,
+    generatedCount,
+  };
+}
+
 async function buildManifestRows(results) {
-  const header = ['archivo', 'local', 'grupo_excel', 'canal', 'precio_normal', 'precio_eminent', 'estado'];
+  const header = ['archivo', 'plantilla', 'local', 'grupo_excel', 'canal', 'precio_normal', 'precio_eminent', 'estado'];
   const rows = results.map((result) => [
     result.outputPath,
+    result.templateName,
     result.priceRow.branchName,
     result.priceRow.groupName,
     result.priceRow.channel.toUpperCase(),
@@ -133,24 +245,30 @@ async function buildManifestRows(results) {
     .join('\n');
 }
 
-export async function analyzeSvgFiles(files) {
+export async function analyzeSvgFiles(files, { productName = '', actionRule = null } = {}) {
   const svgFiles = files.filter((file) => file.name.toLowerCase().endsWith('.svg'));
+  const planned = planTemplateFiles(svgFiles, productName, actionRule);
 
   const results = [];
-  for (const file of svgFiles) {
+  for (const item of planned) {
     try {
+      const file = item.file;
       const text = await file.text();
       const stats = inspectSvg(text);
       results.push({
         name: file.name,
-        path: file.webkitRelativePath || file.name,
+        path: item.inputPath,
+        templateName: item.templateName,
+        templateKey: item.templateKey,
         ok: stats.normalCount > 0 && stats.eminentCount > 0,
         ...stats,
       });
     } catch (error) {
       results.push({
-        name: file.name,
-        path: file.webkitRelativePath || file.name,
+        name: item.file.name,
+        path: item.inputPath,
+        templateName: item.templateName,
+        templateKey: item.templateKey,
         ok: false,
         normalCount: 0,
         eminentCount: 0,
@@ -162,32 +280,35 @@ export async function analyzeSvgFiles(files) {
   return results;
 }
 
-export async function exportPriceZip({ svgFiles, priceRows, productName, smartFolderMatching = true }) {
+export async function exportPriceZip({ svgFiles, priceRows, productName, actionRule }) {
   const files = svgFiles.filter((file) => file.name.toLowerCase().endsWith('.svg'));
   if (!files.length) throw new Error('No hay archivos SVG para exportar.');
   if (!priceRows.length) throw new Error('No hay locales seleccionados.');
 
-  const root = commonRoot(files);
+  const templateFiles = planTemplateFiles(files, productName, actionRule);
+  const availableTemplateKeys = new Set(templateFiles.map((file) => file.templateKey));
+  const missing = summarizeTemplatePlan({ svgFiles: files, priceRows, productName, actionRule }).missingTemplates;
+  if (missing.length) {
+    throw new Error(`Falta carpeta plantilla para: ${missing.join(', ')}.`);
+  }
+
   const zip = new JSZip();
   const results = [];
 
-  for (const file of files) {
-    const rawParts = stripCommonRoot(splitPath(file), root);
-    const pathParts = rawParts.length ? rawParts : [file.name];
-    const matchedTarget = smartFolderMatching ? findTargetFromPath(pathParts, priceRows) : null;
-    const targets = matchedTarget ? [matchedTarget] : priceRows;
-    const svgText = await file.text();
+  for (const templateFile of templateFiles) {
+    const targets = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys);
+    const svgText = await templateFile.file.text();
 
     for (const priceRow of targets) {
-      const relativeParts = matchedTarget ? removeTargetSegment(pathParts, matchedTarget) : pathParts;
-      const outputParts = [priceRow.folderName, ...relativeParts];
+      const outputParts = [priceRow.folderName, ...templateFile.relativeParts];
       const outputPath = safeZipPath(outputParts);
       const processed = replaceSvgPrices(svgText, priceRow);
 
       zip.file(outputPath, processed.svgText);
       results.push({
-        inputPath: file.webkitRelativePath || file.name,
+        inputPath: templateFile.inputPath,
         outputPath,
+        templateName: templateFile.templateName,
         priceRow,
         warnings: processed.warnings,
       });
