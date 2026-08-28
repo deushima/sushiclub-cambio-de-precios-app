@@ -27,8 +27,8 @@ function parseSvg(svgText) {
   return doc;
 }
 
-function selectablePlaceholders(doc, matcher) {
-  const elements = Array.from(doc.querySelectorAll('text, tspan')).filter((element) =>
+function selectablePlaceholders(root, matcher) {
+  const elements = Array.from(root.querySelectorAll('text, tspan')).filter((element) =>
     matcher(element.textContent)
   );
   const matched = new Set(elements);
@@ -37,6 +37,161 @@ function selectablePlaceholders(doc, matcher) {
     const children = Array.from(element.querySelectorAll('text, tspan'));
     return !children.some((child) => child !== element && matched.has(child));
   });
+}
+
+function numberAttr(element, name) {
+  const value = Number.parseFloat(element.getAttribute(name) ?? '');
+  return Number.isFinite(value) ? value : null;
+}
+
+function nodeNumberAttr(element, name) {
+  let node = element;
+  while (node && node.nodeType === 1) {
+    const value = numberAttr(node, name);
+    if (value !== null) return value;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function textElementFor(node) {
+  let current = node;
+  while (current && current.nodeType === 1) {
+    if (current.tagName?.toLowerCase() === 'text') return current;
+    current = current.parentElement;
+  }
+  return node;
+}
+
+function rectInfo(rect) {
+  const x = numberAttr(rect, 'x');
+  const y = numberAttr(rect, 'y');
+  const width = numberAttr(rect, 'width');
+  const height = numberAttr(rect, 'height');
+  const rx = numberAttr(rect, 'rx') ?? 0;
+
+  if (x === null || y === null || width === null || height === null) return null;
+  if (width < 80 || height < 24 || rx < 8) return null;
+
+  return { element: rect, x, y, width, height, centerX: x + width / 2, centerY: y + height / 2 };
+}
+
+function isBefore(source, target) {
+  return Boolean(source.compareDocumentPosition(target) & 4);
+}
+
+function findNearestPill(root, node) {
+  const textElement = textElementFor(node);
+  const x = nodeNumberAttr(node, 'x');
+  const y = nodeNumberAttr(node, 'y');
+  if (x === null || y === null) return null;
+
+  const candidates = Array.from(root.querySelectorAll('rect'))
+    .map(rectInfo)
+    .filter(Boolean)
+    .filter((rect) => isBefore(rect.element, textElement))
+    .map((rect) => {
+      const insideY = y >= rect.y - rect.height * 0.35 && y <= rect.y + rect.height * 1.35;
+      const insideX = x >= rect.x - rect.width * 0.2 && x <= rect.x + rect.width * 1.2;
+      const verticalPenalty = insideY ? 0 : Math.abs(y - rect.centerY);
+      const horizontalPenalty = insideX ? 0 : Math.abs(x - rect.centerX);
+      return {
+        ...rect,
+        score: verticalPenalty * 3 + horizontalPenalty + Math.abs(rect.centerY - y) * 0.2,
+      };
+    })
+    .sort((a, b) => a.score - b.score);
+
+  return candidates[0] ?? null;
+}
+
+function estimateTextWidth(text, fontSize) {
+  return Array.from(text).reduce((sum, char) => {
+    if (char === '$') return sum + fontSize * 0.52;
+    if (char === '.') return sum + fontSize * 0.24;
+    if (char === ',') return sum + fontSize * 0.22;
+    if (/\d/.test(char)) return sum + fontSize * 0.64;
+    return sum + fontSize * 0.62;
+  }, 0);
+}
+
+function visibleTextLength(node, fallbackText) {
+  try {
+    if (typeof node.getComputedTextLength === 'function') {
+      const length = node.getComputedTextLength();
+      if (Number.isFinite(length) && length > 0) return length;
+    }
+
+    const text = textElementFor(node);
+    if (text && typeof text.getComputedTextLength === 'function') {
+      const length = text.getComputedTextLength();
+      if (Number.isFinite(length) && length > 0) return length;
+    }
+  } catch {
+    return null;
+  }
+
+  const fontSize = nodeNumberAttr(node, 'font-size') ?? 42;
+  return estimateTextWidth(fallbackText, fontSize);
+}
+
+function setFontSize(node, fontSize) {
+  const text = textElementFor(node);
+  text?.setAttribute('font-size', String(Number(fontSize.toFixed(3))));
+}
+
+function currentFontSize(node) {
+  return nodeNumberAttr(node, 'font-size') ?? 42;
+}
+
+function centerAndFitPrice(node, priceText, pill) {
+  node.textContent = priceText || '';
+
+  if (!pill) return;
+
+  const text = textElementFor(node);
+  const maxWidth = Math.max(1, pill.width - Math.max(24, pill.width * 0.12));
+
+  text?.setAttribute('text-anchor', 'middle');
+  node.setAttribute('x', String(Number(pill.centerX.toFixed(3))));
+  node.removeAttribute('textLength');
+  node.removeAttribute('lengthAdjust');
+
+  const length = visibleTextLength(node, priceText);
+  if (!length || length <= maxWidth) return;
+
+  const baseFontSize = currentFontSize(node);
+  const scale = Math.max(0.78, Math.min(1, maxWidth / length));
+  setFontSize(node, baseFontSize * scale);
+
+  const adjustedLength = visibleTextLength(node, priceText);
+  if (adjustedLength && adjustedLength > maxWidth) {
+    node.setAttribute('textLength', String(Number(maxWidth.toFixed(3))));
+    node.setAttribute('lengthAdjust', 'spacingAndGlyphs');
+  }
+}
+
+function measurableRoot(doc) {
+  if (typeof document === 'undefined' || !document.body || !document.importNode) {
+    return { root: doc.documentElement, cleanup: () => {} };
+  }
+
+  const holder = document.createElement('div');
+  holder.style.position = 'absolute';
+  holder.style.left = '-100000px';
+  holder.style.top = '0';
+  holder.style.width = '1px';
+  holder.style.height = '1px';
+  holder.style.overflow = 'hidden';
+
+  const root = document.importNode(doc.documentElement, true);
+  holder.appendChild(root);
+  document.body.appendChild(holder);
+
+  return {
+    root,
+    cleanup: () => holder.remove(),
+  };
 }
 
 export function inspectSvg(svgText) {
@@ -49,8 +204,9 @@ export function inspectSvg(svgText) {
 
 export function replaceSvgPrices(svgText, priceRow) {
   const doc = parseSvg(svgText);
-  const normalNodes = selectablePlaceholders(doc, isNormalPlaceholder);
-  const eminentNodes = selectablePlaceholders(doc, isEminentPlaceholder);
+  const { root, cleanup } = measurableRoot(doc);
+  const normalNodes = selectablePlaceholders(root, isNormalPlaceholder);
+  const eminentNodes = selectablePlaceholders(root, isEminentPlaceholder);
   const normalText = formatPrice(priceRow.normal);
   const eminentText = formatPrice(priceRow.eminent);
   const warnings = [];
@@ -60,23 +216,22 @@ export function replaceSvgPrices(svgText, priceRow) {
   if (!normalNodes.length) warnings.push('No se encontro placeholder $$$$.');
   if (!eminentNodes.length) warnings.push('No se encontro placeholder @@@@.');
 
-  normalNodes.forEach((node) => {
-    node.textContent = normalText || '';
-  });
+  normalNodes.forEach((node) => centerAndFitPrice(node, normalText, findNearestPill(root, node)));
+  eminentNodes.forEach((node) => centerAndFitPrice(node, eminentText, findNearestPill(root, node)));
 
-  eminentNodes.forEach((node) => {
-    node.textContent = eminentText || '';
-  });
-
-  const serializer = new XMLSerializer();
-  return {
-    svgText: serializer.serializeToString(doc),
-    stats: {
-      normalCount: normalNodes.length,
-      eminentCount: eminentNodes.length,
-    },
-    warnings,
-  };
+  try {
+    const serializer = new XMLSerializer();
+    return {
+      svgText: serializer.serializeToString(root),
+      stats: {
+        normalCount: normalNodes.length,
+        eminentCount: eminentNodes.length,
+      },
+      warnings,
+    };
+  } finally {
+    cleanup();
+  }
 }
 
 function splitPath(file) {
@@ -94,6 +249,15 @@ function commonRoot(files) {
   const first = splitPath(files[0])[0];
   if (!first) return '';
   return files.every((file) => splitPath(file)[0] === first) ? first : '';
+}
+
+function isSvgFile(file) {
+  return file.name.toLowerCase().endsWith('.svg');
+}
+
+function isIgnoredFile(file) {
+  const name = file.name.toLowerCase();
+  return !file.name || name === '.ds_store' || name === 'thumbs.db';
 }
 
 function safeZipPath(parts) {
@@ -151,12 +315,12 @@ function assignTemplate(parts, actionRule) {
   };
 }
 
-function isActionSpecificUpload(svgFiles, commonRootName, productName) {
-  return svgFiles.some((file) => actionPartIndex(stripCommonRoot(splitPath(file), commonRootName), productName) >= 0);
+function isActionSpecificUpload(files, commonRootName, productName) {
+  return files.some((file) => actionPartIndex(stripCommonRoot(splitPath(file), commonRootName), productName) >= 0);
 }
 
-export function planTemplateFiles(svgFiles, productName, actionRule) {
-  const files = svgFiles.filter((file) => file.name.toLowerCase().endsWith('.svg'));
+function planAllTemplateFiles(uploadedFiles, productName, actionRule) {
+  const files = uploadedFiles.filter((file) => !isIgnoredFile(file));
   const root = commonRoot(files);
   const onlySelectedAction = isActionSpecificUpload(files, root, productName);
 
@@ -179,6 +343,10 @@ export function planTemplateFiles(svgFiles, productName, actionRule) {
     .filter(Boolean);
 }
 
+export function planTemplateFiles(files, productName, actionRule) {
+  return planAllTemplateFiles(files, productName, actionRule).filter((item) => isSvgFile(item.file));
+}
+
 function targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys) {
   const generalKey = templateKey('GENERAL');
   const exceptionKeys = new Set((actionRule?.exceptionTemplates ?? []).map(templateKey));
@@ -195,15 +363,20 @@ function targetsForTemplate(templateFile, priceRows, actionRule, availableTempla
 }
 
 export function summarizeTemplatePlan({ svgFiles, priceRows, productName, actionRule }) {
-  const templateFiles = planTemplateFiles(svgFiles, productName, actionRule);
+  const allTemplateFiles = planAllTemplateFiles(svgFiles, productName, actionRule);
+  const templateFiles = allTemplateFiles.filter((item) => isSvgFile(item.file));
+  const staticFiles = allTemplateFiles.filter((item) => !isSvgFile(item.file));
   const availableTemplateKeys = new Set(templateFiles.map((file) => file.templateKey));
   const templateCounts = new Map();
-  const missingTemplates = [];
-  const generatedCount = templateFiles.reduce((sum, templateFile) => {
+  const generatedSvgCount = templateFiles.reduce((sum, templateFile) => {
     const count = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys).length;
     templateCounts.set(templateFile.templateName, (templateCounts.get(templateFile.templateName) ?? 0) + 1);
     return sum + count;
   }, 0);
+  const generatedStaticCount = staticFiles.reduce((sum, templateFile) => {
+    return sum + targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys).length;
+  }, 0);
+  const missingTemplates = [];
   const generalKey = templateKey('GENERAL');
   const exceptionKeys = new Set((actionRule?.exceptionTemplates ?? []).map(templateKey));
   const hasGeneralTarget = priceRows.some((row) => !exceptionKeys.has(row.branchKey));
@@ -217,16 +390,20 @@ export function summarizeTemplatePlan({ svgFiles, priceRows, productName, action
 
   return {
     templateFiles,
+    staticFiles,
     templateCounts: Array.from(templateCounts, ([name, count]) => ({ name, count })),
     missingTemplates,
-    generatedCount,
+    generatedCount: generatedSvgCount + generatedStaticCount,
+    generatedSvgCount,
+    generatedStaticCount,
   };
 }
 
 async function buildManifestRows(results) {
-  const header = ['archivo', 'plantilla', 'local', 'grupo_excel', 'canal', 'precio_normal', 'precio_eminent', 'estado'];
+  const header = ['archivo', 'tipo', 'plantilla', 'local', 'grupo_excel', 'canal', 'precio_normal', 'precio_eminent', 'estado'];
   const rows = results.map((result) => [
     result.outputPath,
+    result.kind,
     result.templateName,
     result.priceRow.branchName,
     result.priceRow.groupName,
@@ -246,7 +423,7 @@ async function buildManifestRows(results) {
 }
 
 export async function analyzeSvgFiles(files, { productName = '', actionRule = null } = {}) {
-  const svgFiles = files.filter((file) => file.name.toLowerCase().endsWith('.svg'));
+  const svgFiles = files.filter(isSvgFile);
   const planned = planTemplateFiles(svgFiles, productName, actionRule);
 
   const results = [];
@@ -281,12 +458,13 @@ export async function analyzeSvgFiles(files, { productName = '', actionRule = nu
 }
 
 export async function exportPriceZip({ svgFiles, priceRows, productName, actionRule }) {
-  const files = svgFiles.filter((file) => file.name.toLowerCase().endsWith('.svg'));
-  if (!files.length) throw new Error('No hay archivos SVG para exportar.');
+  const files = svgFiles.filter((file) => !isIgnoredFile(file));
+  const templateFiles = planAllTemplateFiles(files, productName, actionRule);
+  const svgTemplateFiles = templateFiles.filter((item) => isSvgFile(item.file));
+  if (!svgTemplateFiles.length) throw new Error('No hay archivos SVG para exportar.');
   if (!priceRows.length) throw new Error('No hay locales seleccionados.');
 
-  const templateFiles = planTemplateFiles(files, productName, actionRule);
-  const availableTemplateKeys = new Set(templateFiles.map((file) => file.templateKey));
+  const availableTemplateKeys = new Set(svgTemplateFiles.map((file) => file.templateKey));
   const missing = summarizeTemplatePlan({ svgFiles: files, priceRows, productName, actionRule }).missingTemplates;
   if (missing.length) {
     throw new Error(`Falta carpeta plantilla para: ${missing.join(', ')}.`);
@@ -297,6 +475,27 @@ export async function exportPriceZip({ svgFiles, priceRows, productName, actionR
 
   for (const templateFile of templateFiles) {
     const targets = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys);
+    if (!targets.length) continue;
+
+    if (!isSvgFile(templateFile.file)) {
+      const assetBuffer = await templateFile.file.arrayBuffer();
+      for (const priceRow of targets) {
+        const outputParts = [priceRow.folderName, ...templateFile.relativeParts];
+        const outputPath = safeZipPath(outputParts);
+
+        zip.file(outputPath, assetBuffer);
+        results.push({
+          inputPath: templateFile.inputPath,
+          outputPath,
+          kind: 'ASSET',
+          templateName: templateFile.templateName,
+          priceRow,
+          warnings: [],
+        });
+      }
+      continue;
+    }
+
     const svgText = await templateFile.file.text();
 
     for (const priceRow of targets) {
@@ -308,6 +507,7 @@ export async function exportPriceZip({ svgFiles, priceRows, productName, actionR
       results.push({
         inputPath: templateFile.inputPath,
         outputPath,
+        kind: 'SVG',
         templateName: templateFile.templateName,
         priceRow,
         warnings: processed.warnings,
@@ -324,7 +524,10 @@ export async function exportPriceZip({ svgFiles, priceRows, productName, actionR
 
   return {
     fileCount: files.length,
+    svgCount: svgTemplateFiles.length,
     generatedCount: results.length,
+    generatedSvgCount: results.filter((result) => result.kind === 'SVG').length,
+    generatedStaticCount: results.filter((result) => result.kind === 'ASSET').length,
     warningCount: results.filter((result) => result.warnings.length).length,
     results,
   };

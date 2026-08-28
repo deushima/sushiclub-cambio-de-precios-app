@@ -131,9 +131,7 @@ export default function App() {
   }
 
   async function handleSvgFolder(event) {
-    const files = Array.from(event.target.files ?? []).filter((file) =>
-      file.name.toLowerCase().endsWith('.svg')
-    );
+    const files = Array.from(event.target.files ?? []).filter((file) => file.name && !file.name.startsWith('.'));
     setSvgFiles(files);
     setSvgAnalysis([]);
     setLastExport(null);
@@ -366,13 +364,13 @@ export default function App() {
         <aside className="panel export-panel">
           <div className="panel-title">
             <FolderOpen size={20} />
-            <h2>SVG</h2>
+            <h2>Archivos</h2>
           </div>
 
           <label className="drop-control">
-            <input type="file" accept=".svg" webkitdirectory="true" multiple onChange={handleSvgFolder} />
+            <input type="file" webkitdirectory="true" multiple onChange={handleSvgFolder} />
             <Upload size={18} />
-            <span>{svgFiles.length ? `${svgFiles.length} archivos SVG` : 'Carpeta SVG'}</span>
+            <span>{svgFiles.length ? `${svgFiles.length} archivos` : 'Carpeta accion'}</span>
           </label>
 
           <div className="template-list">
@@ -400,7 +398,7 @@ export default function App() {
                 {item.ok ? <Check size={16} /> : <AlertTriangle size={16} />}
                 <span title={item.path}>{item.name}</span>
                 <small>
-                  {item.templateName} · ${item.normalCount} / @{item.eminentCount}
+                  {item.templateName} / ${item.normalCount} / @{item.eminentCount}
                 </small>
               </div>
             ))}
@@ -416,7 +414,8 @@ export default function App() {
             <div className="notice notice-success">
               <Check size={17} />
               <span>
-                {lastExport.generatedCount} SVG generados. {lastExport.warningCount} con aviso.
+                {lastExport.generatedCount} archivos generados ({lastExport.generatedSvgCount} SVG).{' '}
+                {lastExport.warningCount} con aviso.
               </span>
             </div>
           )}
