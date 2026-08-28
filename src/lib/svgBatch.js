@@ -108,11 +108,11 @@ function findNearestPill(root, node) {
 
 function estimateTextWidth(text, fontSize) {
   return Array.from(text).reduce((sum, char) => {
-    if (char === '$') return sum + fontSize * 0.52;
-    if (char === '.') return sum + fontSize * 0.24;
-    if (char === ',') return sum + fontSize * 0.22;
-    if (/\d/.test(char)) return sum + fontSize * 0.64;
-    return sum + fontSize * 0.62;
+    if (char === '$') return sum + fontSize * 0.62;
+    if (char === '.') return sum + fontSize * 0.3;
+    if (char === ',') return sum + fontSize * 0.28;
+    if (/\d/.test(char)) return sum + fontSize * 0.74;
+    return sum + fontSize * 0.7;
   }, 0);
 }
 
@@ -138,7 +138,9 @@ function visibleTextLength(node, fallbackText) {
 
 function setFontSize(node, fontSize) {
   const text = textElementFor(node);
-  text?.setAttribute('font-size', String(Number(fontSize.toFixed(3))));
+  const value = String(Number(fontSize.toFixed(3)));
+  text?.setAttribute('font-size', value);
+  node.setAttribute('font-size', value);
 }
 
 function applyPriceTypography(node, typography) {
@@ -165,7 +167,7 @@ function centerAndFitPrice(node, priceText, pill, typography) {
   if (!pill) return;
 
   const text = textElementFor(node);
-  const maxWidth = Math.max(1, pill.width - Math.max(24, pill.width * 0.12));
+  const maxWidth = Math.max(1, pill.width - Math.max(38, pill.width * 0.18));
 
   text?.setAttribute('text-anchor', 'middle');
   node.setAttribute('x', String(Number(pill.centerX.toFixed(3))));
@@ -176,7 +178,7 @@ function centerAndFitPrice(node, priceText, pill, typography) {
   if (!length || length <= maxWidth) return;
 
   const baseFontSize = currentFontSize(node);
-  const scale = Math.max(0.78, Math.min(1, maxWidth / length));
+  const scale = Math.max(0.62, Math.min(1, maxWidth / length));
   setFontSize(node, baseFontSize * scale);
 
   const adjustedLength = visibleTextLength(node, priceText);
@@ -435,13 +437,13 @@ function priceGroupKey(row) {
 function compactBranchFolderName(rows) {
   const names = rows.map((row) => row.folderName || row.branchName).filter(Boolean);
   const full = names.join(' + ');
-  if (full.length <= 180) return full;
+  if (full.length <= 95) return full;
 
   const kept = [];
   let length = 0;
   for (const name of names) {
     const nextLength = length + (kept.length ? 3 : 0) + name.length;
-    if (nextLength > 150) break;
+    if (nextLength > 72) break;
     kept.push(name);
     length = nextLength;
   }
