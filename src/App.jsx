@@ -106,14 +106,15 @@ export default function App() {
   const [groupSamePrices, setGroupSamePrices] = useState(true);
   const [theme, setTheme] = useState(() => {
     try {
-      return window.localStorage.getItem('sushiclub-theme') === 'dark' ? 'dark' : 'light';
+      return window.localStorage.getItem('sushiclub-theme') === 'light' ? 'light' : 'dark';
     } catch {
-      return 'light';
+      return 'dark';
     }
   });
   const [previewItems, setPreviewItems] = useState([]);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState('');
+  const [previewProgress, setPreviewProgress] = useState(null);
   const [priceTypography, setPriceTypography] = useState(DEFAULT_PRICE_TYPOGRAPHY);
   const [exportProgress, setExportProgress] = useState(null);
 
@@ -217,11 +218,20 @@ export default function App() {
       setPreviewError('');
       setIsPreviewing(Boolean(svgFiles.length && selectedRows.length));
       setPreviewItems([]);
+      setPreviewProgress(null);
 
       if (!svgFiles.length || !selectedRows.length || svgPlan.missingTemplates.length) {
         setIsPreviewing(false);
+        setPreviewProgress(null);
         return;
       }
+
+      setPreviewProgress({
+        done: 0,
+        total: Math.min(selectedRows.filter((row) => row.normal && row.eminent).length, 12),
+        stage: 'Preparando',
+        current: '',
+      });
 
       try {
         const items = await buildPricePreviews({
@@ -230,6 +240,9 @@ export default function App() {
           productName: selectedProduct?.name ?? '',
           actionRule,
           priceTypography: resolvedTypography,
+          onProgress: (progress) => {
+            if (mounted) setPreviewProgress(progress);
+          },
         });
 
         if (mounted) setPreviewItems(items);
@@ -238,6 +251,7 @@ export default function App() {
         if (mounted) setPreviewError(error.message);
       } finally {
         if (mounted) setIsPreviewing(false);
+        if (mounted) setPreviewProgress(null);
       }
     }
 
@@ -827,6 +841,25 @@ export default function App() {
         )}
 
         {isPreviewing && <p className="empty">Generando miniaturas...</p>}
+
+        {isPreviewing && previewProgress && (
+          <div className="render-progress" aria-live="polite">
+            <div className="progress-bar progress-bar-red">
+              <span
+                style={{
+                  width: `${Math.min(
+                    100,
+                    Math.round(((previewProgress.done || 0) / Math.max(1, previewProgress.total || 1)) * 100),
+                  )}%`,
+                }}
+              />
+            </div>
+            <small>
+              {previewProgress.done || 0} / {previewProgress.total || 0}
+              {previewProgress.current ? ` - ${previewProgress.current}` : ''}
+            </small>
+          </div>
+        )}
 
         <div className="preview-grid">
           {previewItems.map((item) => (

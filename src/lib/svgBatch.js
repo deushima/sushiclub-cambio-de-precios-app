@@ -805,6 +805,7 @@ export async function buildPricePreviews({
   priceTypography,
   rowLimit = 12,
   piecesPerRow = 1,
+  onProgress = null,
 }) {
   if (typeof URL === 'undefined' || typeof Blob === 'undefined') return [];
 
@@ -815,13 +816,27 @@ export async function buildPricePreviews({
   const exportTypography = await resolveExportTypography(priceTypography);
   const svgTextCache = new Map();
   const previews = [];
+  let done = 0;
+
+  const reportPreviewProgress = (priceRow, stage = 'Generando miniaturas') => {
+    done += 1;
+    onProgress?.({
+      done,
+      total: rows.length,
+      stage,
+      current: priceRow?.branchName ?? '',
+    });
+  };
 
   for (const priceRow of rows) {
     const matchingTemplates = templateFiles
       .filter((templateFile) => targetsForTemplate(templateFile, [priceRow], actionRule, availableTemplateKeys).length)
       .slice(0, piecesPerRow);
 
-    if (!matchingTemplates.length) continue;
+    if (!matchingTemplates.length) {
+      reportPreviewProgress(priceRow, 'Sin plantilla');
+      continue;
+    }
 
     const pieces = [];
     for (const templateFile of matchingTemplates) {
@@ -849,6 +864,7 @@ export async function buildPricePreviews({
       eminentText: formatPrice(priceRow.eminent),
       pieces,
     });
+    reportPreviewProgress(priceRow);
   }
 
   return previews;

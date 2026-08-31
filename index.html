@@ -1,11 +1,21 @@
 <!doctype html>
-<html lang="es">
+<html lang="es" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (() => {
+        try {
+          const theme = window.localStorage.getItem('sushiclub-theme') === 'light' ? 'light' : 'dark';
+          document.documentElement.dataset.theme = theme;
+        } catch {
+          document.documentElement.dataset.theme = 'dark';
+        }
+      })();
+    </script>
     <title>SUSHICLUB Precios</title>
-    <script type="module" crossorigin src="/sushiclub-cambio-de-precios-app/assets/index-CryIw8ES.js"></script>
-    <link rel="stylesheet" crossorigin href="/sushiclub-cambio-de-precios-app/assets/index-BoPZVHEa.css">
+    <script type="module" crossorigin src="/sushiclub-cambio-de-precios-app/assets/index-Es6mVoqY.js"></script>
+    <link rel="stylesheet" crossorigin href="/sushiclub-cambio-de-precios-app/assets/index-Dk-zUG4S.css">
   </head>
   <body>
     <div id="root"></div>

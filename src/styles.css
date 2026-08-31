@@ -747,6 +747,10 @@ td strong {
   transition: width 0.2s ease;
 }
 
+.progress-bar-red span {
+  background: var(--brand);
+}
+
 .svg-list {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -833,6 +837,18 @@ td strong {
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.render-progress {
+  display: grid;
+  gap: 7px;
+}
+
+.render-progress small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .preview-grid {
