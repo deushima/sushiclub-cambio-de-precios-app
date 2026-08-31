@@ -505,8 +505,21 @@ td {
 
 td strong {
   display: block;
-  max-width: 210px;
+  max-width: 360px;
   overflow-wrap: anywhere;
+}
+
+.grouped-row td {
+  background: #fbfcfd;
+}
+
+.group-count {
+  color: var(--teal);
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  margin-top: 4px;
+  text-transform: uppercase;
 }
 
 .muted-row {

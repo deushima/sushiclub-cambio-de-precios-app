@@ -40,6 +40,52 @@ function revokePreviewItems(items) {
   items.forEach((item) => item.pieces.forEach((piece) => URL.revokeObjectURL(piece.url)));
 }
 
+function priceGroupKey(row) {
+  if (!row.normal || !row.eminent) return row.id;
+  return [row.templateName, row.normal, row.eminent].map((part) => String(part ?? '')).join('|');
+}
+
+function compactNames(rows, getter) {
+  const names = Array.from(new Set(rows.map(getter).filter(Boolean)));
+  return names.join(' / ');
+}
+
+function buildDisplayPriceRows(priceRows, groupSamePrices) {
+  if (!groupSamePrices) {
+    return priceRows.map((row) => ({
+      id: row.id,
+      rows: [row],
+      branchLabel: row.branchName,
+      groupLabel: row.groupName,
+      templateName: row.templateName,
+      normal: row.normal,
+      eminent: row.eminent,
+      ready: Boolean(row.normal && row.eminent),
+    }));
+  }
+
+  const groups = new Map();
+  priceRows.forEach((row) => {
+    const key = priceGroupKey(row);
+    const group = groups.get(key) ?? { id: key, rows: [] };
+    group.rows.push(row);
+    groups.set(key, group);
+  });
+
+  return Array.from(groups.values()).map((group) => {
+    const first = group.rows[0];
+    return {
+      ...group,
+      branchLabel: compactNames(group.rows, (row) => row.branchName),
+      groupLabel: compactNames(group.rows, (row) => row.groupName),
+      templateName: first.templateName,
+      normal: first.normal,
+      eminent: first.eminent,
+      ready: group.rows.every((row) => row.normal && row.eminent),
+    };
+  });
+}
+
 export default function App() {
   const [workbook, setWorkbook] = useState(null);
   const [workbookError, setWorkbookError] = useState('');
@@ -96,6 +142,14 @@ export default function App() {
     if (!selectedPriceIds.size) return priceRows.filter((row) => row.normal && row.eminent);
     return priceRows.filter((row) => selectedPriceIds.has(row.id));
   }, [priceRows, selectedPriceIds]);
+  const selectedIdSet = useMemo(() => {
+    if (selectedPriceIds.size) return selectedPriceIds;
+    return new Set(priceRows.filter((row) => row.normal && row.eminent).map((row) => row.id));
+  }, [priceRows, selectedPriceIds]);
+  const displayPriceRows = useMemo(
+    () => buildDisplayPriceRows(priceRows, groupSamePrices),
+    [priceRows, groupSamePrices]
+  );
   const resolvedTypography = useMemo(() => resolvePriceTypography(priceTypography), [priceTypography]);
 
   const svgPlan = useMemo(() => {
@@ -218,11 +272,16 @@ export default function App() {
     setLastExport(null);
   }
 
-  function toggleRow(id) {
+  function toggleRows(ids) {
     setSelectedPriceIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const next = current.size
+        ? new Set(current)
+        : new Set(priceRows.filter((row) => row.normal && row.eminent).map((row) => row.id));
+      const allSelected = ids.every((id) => next.has(id));
+      ids.forEach((id) => {
+        if (allSelected) next.delete(id);
+        else next.add(id);
+      });
       return next;
     });
   }
@@ -402,8 +461,9 @@ export default function App() {
           </div>
 
           <div className="price-summary">
-            {statLabel(selectedRows.length || '-', 'seleccionados')}
+            {statLabel(selectedRows.length || '-', 'locales seleccionados')}
             {statLabel(priceRows.filter((row) => row.normal && row.eminent).length || '-', 'con 2 precios')}
+            {statLabel(displayPriceRows.length || '-', groupSamePrices ? 'bloques' : 'filas')}
             {statLabel(outputCounts.outputFolderCount || '-', 'carpetas')}
             {statLabel(outputCounts.generatedPngCount || '-', 'png')}
           </div>
@@ -422,27 +482,32 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {priceRows.map((row) => {
-                  const checked = selectedPriceIds.size ? selectedPriceIds.has(row.id) : Boolean(row.normal && row.eminent);
-                  const ready = Boolean(row.normal && row.eminent);
+                {displayPriceRows.map((group) => {
+                  const ids = group.rows.map((row) => row.id);
+                  const checked = ids.every((id) => selectedIdSet.has(id));
+                  const ready = group.ready;
 
                   return (
-                    <tr key={row.id} className={ready ? '' : 'muted-row'}>
+                    <tr
+                      key={group.id}
+                      className={`${ready ? '' : 'muted-row'} ${group.rows.length > 1 ? 'grouped-row' : ''}`.trim()}
+                    >
                       <td>
                         <input
                           type="checkbox"
                           checked={checked}
-                          onChange={() => toggleRow(row.id)}
-                          aria-label={`Seleccionar ${row.branchName}`}
+                          onChange={() => toggleRows(ids)}
+                          aria-label={`Seleccionar ${group.branchLabel}`}
                         />
                       </td>
                       <td>
-                        <strong>{row.branchName}</strong>
+                        <strong>{group.branchLabel}</strong>
+                        {group.rows.length > 1 && <small className="group-count">{group.rows.length} locales</small>}
                       </td>
-                      <td>{row.groupName}</td>
-                      <td>{row.templateName}</td>
-                      <td>{formatPrice(row.normal) || humanNumber(row.normal) || '-'}</td>
-                      <td>{formatPrice(row.eminent) || humanNumber(row.eminent) || '-'}</td>
+                      <td>{group.groupLabel}</td>
+                      <td>{group.templateName}</td>
+                      <td>{formatPrice(group.normal) || humanNumber(group.normal) || '-'}</td>
+                      <td>{formatPrice(group.eminent) || humanNumber(group.eminent) || '-'}</td>
                       <td>
                         {ready ? <StatusPill tone="ok">OK</StatusPill> : <StatusPill tone="warn">Revisar</StatusPill>}
                       </td>
