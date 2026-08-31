@@ -6,8 +6,10 @@ import {
   FileSpreadsheet,
   FolderOpen,
   Images,
+  Moon,
   Search,
   Sparkles,
+  Sun,
   Type,
   Upload,
 } from 'lucide-react';
@@ -102,6 +104,13 @@ export default function App() {
   const [outputFormat, setOutputFormat] = useState('png');
   const [includeStaticAssets, setIncludeStaticAssets] = useState(false);
   const [groupSamePrices, setGroupSamePrices] = useState(true);
+  const [theme, setTheme] = useState(() => {
+    try {
+      return window.localStorage.getItem('sushiclub-theme') === 'dark' ? 'dark' : 'light';
+    } catch {
+      return 'light';
+    }
+  });
   const [previewItems, setPreviewItems] = useState([]);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState('');
@@ -242,6 +251,15 @@ export default function App() {
     return () => revokePreviewItems(previewItems);
   }, [previewItems]);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      window.localStorage.setItem('sushiclub-theme', theme);
+    } catch {
+      // La app sigue funcionando aunque el navegador bloquee localStorage.
+    }
+  }, [theme]);
+
   async function handleWorkbook(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -341,10 +359,25 @@ export default function App() {
           <p className="eyebrow">SUSHICLUB</p>
           <h1>Cambio de precios</h1>
         </div>
-        <div className="topbar-stats">
-          {statLabel(workbook?.sheetName ?? '-', 'hoja')}
-          {statLabel(products.length || '-', 'items')}
-          {statLabel(svgAnalysis.length || '-', 'svg')}
+        <div className="topbar-right">
+          <div className="topbar-stats">
+            {statLabel(workbook?.sheetName ?? '-', 'hoja')}
+            {statLabel(products.length || '-', 'items')}
+            {statLabel(svgAnalysis.length || '-', 'svg')}
+          </div>
+          <button
+            type="button"
+            className="theme-toggle"
+            aria-label={theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+            aria-pressed={theme === 'dark'}
+            onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+          >
+            <Sun size={14} />
+            <span className="theme-track">
+              <span className="theme-thumb" />
+            </span>
+            <Moon size={14} />
+          </button>
         </div>
       </header>
 
@@ -380,7 +413,12 @@ export default function App() {
               <button
                 type="button"
                 key={option.id}
-                className={option.productKey === selectedProduct?.key ? 'active' : ''}
+                className={[
+                  option.productKey === selectedProduct?.key ? 'active' : '',
+                  option.featured ? 'featured' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
                 onClick={() => {
                   setSelectedProductKey(option.productKey);
                   setSelectedPriceIds(new Set());

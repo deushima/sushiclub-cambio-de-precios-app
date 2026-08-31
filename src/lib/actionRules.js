@@ -33,6 +33,24 @@ export const ACTION_PRESETS = [
     exact: false,
     exceptionTemplates: ['BAHIA BLANCA'],
   },
+  {
+    id: 'sushi-beer',
+    label: 'SUSHI&BEER',
+    productIncludes: ['sushi & beer session', 'sushi&beer', 'sushi beer session'],
+    folderNames: ['SUSHI&BEER', 'Sushi & Beer', 'Sushi Beer'],
+    exact: false,
+    featured: true,
+    exceptionTemplates: [],
+  },
+  {
+    id: 'lunes-martes-deluxe',
+    label: 'Lunes y Martes Deluxe',
+    productIncludes: ['lunes y martes deluxe'],
+    folderNames: ['Lunes y Martes Deluxe'],
+    exact: false,
+    featured: true,
+    exceptionTemplates: [],
+  },
 ];
 
 function productMatchesPreset(product, preset) {
