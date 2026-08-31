@@ -34,6 +34,27 @@ export const ACTION_PRESETS = [
     exceptionTemplates: ['BAHIA BLANCA'],
   },
   {
+    id: 'combinado-del-mes',
+    label: 'Combinado del Mes',
+    productIncludes: ['combinado sushiman selection 18p'],
+    folderNames: ['Combinado del Mes', 'Combinado Del Mes'],
+    exact: false,
+    featured: true,
+    exceptionTemplates: [],
+  },
+  {
+    id: 'domingo-zen',
+    label: 'Domingo Zen',
+    productIncludes: [
+      'combinado roll&roll + 3 niguiri anticuchero',
+      'combinado sushiclub + 3 niguiri anticuchero',
+    ],
+    folderNames: ['Domingo Zen'],
+    exact: false,
+    featured: true,
+    exceptionTemplates: [],
+  },
+  {
     id: 'sushi-beer',
     label: 'SUSHI&BEER',
     productIncludes: ['sushi & beer session', 'sushi&beer', 'sushi beer session'],
