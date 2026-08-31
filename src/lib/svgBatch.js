@@ -666,6 +666,7 @@ function loadSvgImage(url) {
     const image = new Image();
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error('No pude renderizar el SVG como imagen.'));
+    image.decoding = 'sync';
     image.src = url;
   });
 }
@@ -687,10 +688,12 @@ async function svgToPngBlob(svgText) {
   const { width, height } = svgSize(svgText);
   const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
   const url = URL.createObjectURL(blob);
+  let canvas = null;
+  let image = null;
 
   try {
-    const image = await loadSvgImage(url);
-    const canvas = document.createElement('canvas');
+    image = await loadSvgImage(url);
+    canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
 
@@ -700,6 +703,11 @@ async function svgToPngBlob(svgText) {
 
     return await canvasToPngBlob(canvas);
   } finally {
+    if (canvas) {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+    if (image) image.src = '';
     URL.revokeObjectURL(url);
   }
 }
@@ -713,6 +721,42 @@ function outputFormatFlags(outputFormat = 'png') {
     includeSvg: outputFormat === 'svg' || outputFormat === 'both',
     includePng: outputFormat === 'png' || outputFormat === 'both',
   };
+}
+
+function canExportToDirectory() {
+  return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';
+}
+
+function yieldToBrowser() {
+  return new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+async function ensureDirectory(rootHandle, parts) {
+  let current = rootHandle;
+  for (const part of parts) {
+    current = await current.getDirectoryHandle(part, { create: true });
+  }
+  return current;
+}
+
+async function writeBlobToDirectory(rootHandle, outputPath, blob) {
+  const parts = outputPath.split('/').filter(Boolean);
+  const fileName = parts.pop();
+  if (!fileName) return;
+
+  const directory = await ensureDirectory(rootHandle, parts);
+  const handle = await directory.getFileHandle(fileName, { create: true });
+  const writable = await handle.createWritable();
+  try {
+    await writable.write(blob);
+  } finally {
+    await writable.close();
+  }
+}
+
+function progressLabel(outputPath) {
+  const parts = outputPath.split('/');
+  return parts.slice(-2).join(' / ') || outputPath;
 }
 
 export async function analyzeSvgFiles(files, { productName = '', actionRule = null } = {}) {
@@ -734,6 +778,7 @@ export async function analyzeSvgFiles(files, { productName = '', actionRule = nu
         error: stats.unresolvedImageCount ? `${stats.unresolvedImageCount} imagenes no embebidas` : '',
         ...stats,
       });
+      await yieldToBrowser();
     } catch (error) {
       results.push({
         name: item.file.name,
@@ -745,6 +790,7 @@ export async function analyzeSvgFiles(files, { productName = '', actionRule = nu
         eminentCount: 0,
         error: error.message,
       });
+      await yieldToBrowser();
     }
   }
 
@@ -757,8 +803,8 @@ export async function buildPricePreviews({
   productName,
   actionRule,
   priceTypography,
-  rowLimit = 32,
-  piecesPerRow = 2,
+  rowLimit = 12,
+  piecesPerRow = 1,
 }) {
   if (typeof URL === 'undefined' || typeof Blob === 'undefined') return [];
 
@@ -817,6 +863,7 @@ export async function exportPriceZip({
   outputFormat = 'png',
   includeStaticAssets = false,
   groupSamePrices = false,
+  onProgress = null,
 }) {
   const files = svgFiles.filter((file) => !isIgnoredFile(file));
   const templateFiles = planAllTemplateFiles(files, productName, actionRule);
@@ -831,9 +878,47 @@ export async function exportPriceZip({
     throw new Error(`Falta carpeta plantilla para: ${missing.join(', ')}.`);
   }
 
-  const zip = new JSZip();
+  const safeProduct = slugFolder(productName || 'accion').replace(/\s+/g, '-').toLowerCase();
+  const totalOutputs = templateFiles.reduce((sum, templateFile) => {
+    const targets = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys);
+    if (!targets.length) return sum;
+    const targetGroups = rowGroupsForTargets(targets, groupSamePrices);
+    if (!isSvgFile(templateFile.file)) return sum + (includePng && includeStaticAssets ? targetGroups.length : 0);
+    return sum + targetGroups.length * Number(includeSvg) + targetGroups.length * Number(includePng);
+  }, 0);
   const results = [];
+  const useDirectoryExport = canExportToDirectory();
+  const pickedDirectory = useDirectoryExport
+    ? await window.showDirectoryPicker({ id: 'sushiclub-export', mode: 'readwrite' })
+    : null;
+  const outputRootHandle = pickedDirectory
+    ? await pickedDirectory.getDirectoryHandle(`sushiclub-${safeProduct}-precios`, { create: true })
+    : null;
+  const zip = outputRootHandle ? null : new JSZip();
   const exportTypography = await resolveExportTypography(priceTypography);
+  let done = 0;
+
+  const reportProgress = (outputPath, stage = 'Exportando') => {
+    done += 1;
+    onProgress?.({
+      done,
+      total: totalOutputs,
+      stage,
+      current: progressLabel(outputPath),
+      mode: outputRootHandle ? 'folder' : 'zip',
+    });
+  };
+
+  const addOutput = async (outputPath, blob, stage) => {
+    if (outputRootHandle) {
+      await writeBlobToDirectory(outputRootHandle, outputPath, blob);
+    } else {
+      zip.file(outputPath, blob, { compression: 'STORE' });
+    }
+
+    reportProgress(outputPath, stage);
+    await yieldToBrowser();
+  };
 
   for (const templateFile of templateFiles) {
     const targets = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys);
@@ -847,7 +932,7 @@ export async function exportPriceZip({
         const outputParts = [targetGroup.folderName, ...templateFile.relativeParts];
         const outputPath = safeZipPath(outputParts);
 
-        zip.file(outputPath, assetBuffer);
+        await addOutput(outputPath, new Blob([assetBuffer]), 'Copiando PNG base');
         results.push({
           inputPath: templateFile.inputPath,
           outputPath,
@@ -871,7 +956,7 @@ export async function exportPriceZip({
       const processed = replaceSvgPrices(svgText, priceRow, { priceTypography: exportTypography });
 
       if (includeSvg) {
-        zip.file(outputPath, processed.svgText);
+        await addOutput(outputPath, new Blob([processed.svgText], { type: 'image/svg+xml;charset=utf-8' }), 'Guardando SVG');
         results.push({
           inputPath: templateFile.inputPath,
           outputPath,
@@ -887,7 +972,7 @@ export async function exportPriceZip({
       if (includePng) {
         const pngOutputPath = pngPathForSvg(outputPath);
         const pngBlob = await svgToPngBlob(processed.svgText);
-        zip.file(pngOutputPath, pngBlob);
+        await addOutput(pngOutputPath, pngBlob, 'Renderizando PNG');
         results.push({
           inputPath: templateFile.inputPath,
           outputPath: pngOutputPath,
@@ -905,11 +990,24 @@ export async function exportPriceZip({
   if (!results.length) throw new Error('El modo elegido no genero archivos para descargar.');
 
   const manifest = await buildManifestRows(results);
-  zip.file('_reporte_precios.csv', manifest);
-
-  const blob = await zip.generateAsync({ type: 'blob' });
-  const safeProduct = slugFolder(productName || 'accion').replace(/\s+/g, '-').toLowerCase();
-  saveAs(blob, `sushiclub-${safeProduct}-precios.zip`);
+  if (outputRootHandle) {
+    await writeBlobToDirectory(
+      outputRootHandle,
+      '_reporte_precios.csv',
+      new Blob([manifest], { type: 'text/csv;charset=utf-8' })
+    );
+  } else {
+    zip.file('_reporte_precios.csv', manifest, { compression: 'STORE' });
+    onProgress?.({
+      done,
+      total: totalOutputs,
+      stage: 'Armando ZIP',
+      current: 'Comprimido final',
+      mode: 'zip',
+    });
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE', streamFiles: true });
+    saveAs(blob, `sushiclub-${safeProduct}-precios.zip`);
+  }
 
   return {
     fileCount: files.length,
@@ -919,6 +1017,8 @@ export async function exportPriceZip({
     generatedPngCount: results.filter((result) => result.kind === 'PNG').length,
     generatedStaticCount: results.filter((result) => result.kind === 'ASSET').length,
     warningCount: results.filter((result) => result.warnings.length).length,
+    destination: outputRootHandle ? `carpeta sushiclub-${safeProduct}-precios` : `sushiclub-${safeProduct}-precios.zip`,
+    mode: outputRootHandle ? 'folder' : 'zip',
     results,
   };
 }

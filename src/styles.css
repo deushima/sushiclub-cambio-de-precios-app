@@ -596,6 +596,40 @@ td strong {
   cursor: not-allowed;
 }
 
+.export-progress {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+}
+
+.export-progress strong {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.export-progress small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.progress-bar {
+  background: #eceff2;
+  border-radius: 999px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.progress-bar span {
+  background: var(--teal);
+  display: block;
+  height: 100%;
+  transition: width 0.2s ease;
+}
+
 .svg-list {
   border: 1px solid var(--line);
   border-radius: 8px;

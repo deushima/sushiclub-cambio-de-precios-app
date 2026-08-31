@@ -60,6 +60,7 @@ export default function App() {
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [priceTypography, setPriceTypography] = useState(DEFAULT_PRICE_TYPOGRAPHY);
+  const [exportProgress, setExportProgress] = useState(null);
 
   const products = workbook?.products ?? [];
   const actionOptions = useMemo(() => actionOptionsForProducts(products), [products]);
@@ -237,6 +238,7 @@ export default function App() {
   async function handleExport() {
     setIsExporting(true);
     setLastExport(null);
+    setExportProgress({ done: 0, total: outputCounts.generatedCount, stage: 'Preparando', current: '' });
 
     try {
       const result = await exportPriceZip({
@@ -248,11 +250,14 @@ export default function App() {
         outputFormat,
         includeStaticAssets,
         groupSamePrices,
+        onProgress: setExportProgress,
       });
       setLastExport({ type: 'success', ...result });
     } catch (error) {
-      setLastExport({ type: 'error', message: error.message });
+      const message = error.name === 'AbortError' ? 'Exportacion cancelada.' : error.message;
+      setLastExport({ type: 'error', message });
     } finally {
+      setExportProgress(null);
       setIsExporting(false);
     }
   }
@@ -572,7 +577,7 @@ export default function App() {
               </label>
 
               <p className="hint">
-                Por defecto baja solo las imagenes PNG generadas desde los SVG y agrupa locales con igual precio.
+                En Chrome guarda directo en una carpeta para no cargar un ZIP gigante en memoria.
               </p>
             </div>
           ) : (
@@ -649,15 +654,37 @@ export default function App() {
 
           <button type="button" className="primary-button" disabled={!canExport} onClick={handleExport}>
             <Download size={18} />
-            <span>{isExporting ? 'Preparando ZIP' : 'Descargar contenido'}</span>
+            <span>{isExporting ? 'Exportando' : 'Descargar contenido'}</span>
           </button>
+
+          {isExporting && exportProgress && (
+            <div className="export-progress" aria-live="polite">
+              <div className="progress-bar">
+                <span
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round(((exportProgress.done || 0) / Math.max(1, exportProgress.total || 1)) * 100),
+                    )}%`,
+                  }}
+                />
+              </div>
+              <strong>
+                {exportProgress.done || 0} / {exportProgress.total || 0}
+              </strong>
+              <small>
+                {exportProgress.stage}
+                {exportProgress.current ? ` - ${exportProgress.current}` : ''}
+              </small>
+            </div>
+          )}
 
           {lastExport?.type === 'success' && (
             <div className="notice notice-success">
               <Check size={17} />
               <span>
                 {lastExport.generatedCount} archivos generados ({lastExport.generatedSvgCount} SVG,{' '}
-                {lastExport.generatedPngCount} PNG).{' '}
+                {lastExport.generatedPngCount} PNG). {lastExport.destination}.{' '}
                 {lastExport.warningCount} con aviso.
               </span>
             </div>
