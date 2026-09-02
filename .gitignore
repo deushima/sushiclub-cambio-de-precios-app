@@ -9,3 +9,4 @@ Thumbs.db
 *.log
 .vite-dev.*.log
 *.rar
+__pycache__/

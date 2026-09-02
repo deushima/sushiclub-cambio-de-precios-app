@@ -17,6 +17,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 SVG_NS = "http://www.w3.org/2000/svg"
+PRICE_SYMBOL_SCALE = 0.66
+PRICE_SYMBOL_GAP_EM = 0.12
 
 
 def clean_text(value):
@@ -123,7 +125,7 @@ def estimate_text_width(text, font_size):
     width = 0
     for char in text:
         if char == "$":
-            width += font_size * 0.62
+            width += font_size * 0.62 * PRICE_SYMBOL_SCALE + font_size * PRICE_SYMBOL_GAP_EM
         elif char == ".":
             width += font_size * 0.3
         elif char == ",":
@@ -138,6 +140,43 @@ def estimate_text_width(text, font_size):
 def clear_children(node):
     for child in list(node):
         node.remove(child)
+
+
+def price_tspan(node):
+    namespace = etree.QName(node).namespace or SVG_NS
+    return etree.SubElement(node, f"{{{namespace}}}tspan")
+
+
+def set_price_text(node, price_text, font_size):
+    clear_children(node)
+    node.text = None
+
+    if not price_text.startswith("$"):
+        node.text = price_text
+        return
+
+    symbol = price_tspan(node)
+    symbol.text = "$"
+    symbol.set("data-sushiclub-price-symbol", "true")
+    symbol.set("font-size", f"{font_size * PRICE_SYMBOL_SCALE:.3f}".rstrip("0").rstrip("."))
+    symbol.set("dominant-baseline", "middle")
+    symbol.set("alignment-baseline", "middle")
+
+    value = price_tspan(node)
+    value.text = price_text[1:]
+    value.set("dx", f"{font_size * PRICE_SYMBOL_GAP_EM:.3f}".rstrip("0").rstrip("."))
+
+
+def set_price_font_size(node, text, font_size):
+    next_size_value = f"{font_size:.3f}".rstrip("0").rstrip(".")
+    if text is not None:
+        text.set("font-size", next_size_value)
+    node.set("font-size", next_size_value)
+
+    symbol_size = f"{font_size * PRICE_SYMBOL_SCALE:.3f}".rstrip("0").rstrip(".")
+    for child in node.iterdescendants():
+        if local_name(child) == "tspan" and child.get("data-sushiclub-price-symbol") == "true":
+            child.set("font-size", symbol_size)
 
 
 def apply_price_typography(node):
@@ -216,8 +255,8 @@ def absolutize_linked_assets(root, base_dir):
 
 def center_and_fit_price(node, price_text, pill):
     original_marker = token_text("".join(node.itertext()))
-    clear_children(node)
-    node.text = price_text
+    base_size = node_number_attr(node, "font-size") or 42
+    set_price_text(node, price_text, base_size)
     apply_price_typography(node)
     remove_price_filter_crop(node)
 
@@ -231,7 +270,6 @@ def center_and_fit_price(node, price_text, pill):
         node.set("x", f"{pill['center_x']:.3f}".rstrip("0").rstrip("."))
         node.set("y", f"{pill['center_y']:.3f}".rstrip("0").rstrip("."))
     else:
-        base_size = node_number_attr(node, "font-size") or 42
         placeholder_width = estimate_text_width(original_marker, base_size)
         marker_factor = 1.55 if original_marker.startswith("$") else 2.1
         max_width = max(1, placeholder_width * marker_factor)
@@ -245,10 +283,7 @@ def center_and_fit_price(node, price_text, pill):
 
     scale = max(0.62, min(1, max_width / estimated))
     next_size = font_size * scale
-    next_size_value = f"{next_size:.3f}".rstrip("0").rstrip(".")
-    if text is not None:
-        text.set("font-size", next_size_value)
-    node.set("font-size", next_size_value)
+    set_price_font_size(node, text, next_size)
 
     if estimate_text_width(price_text, next_size) > max_width:
         node.set("textLength", f"{max_width:.3f}".rstrip("0").rstrip("."))

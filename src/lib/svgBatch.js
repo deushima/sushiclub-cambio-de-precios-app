@@ -5,6 +5,8 @@ import { actionFolderKeysForRule, templateKey, templateLabel } from './actionRul
 import { resolvePriceTypography } from './priceTypography.js';
 
 const { saveAs } = FileSaver;
+const PRICE_SYMBOL_SCALE = 0.66;
+const PRICE_SYMBOL_GAP_EM = 0.12;
 
 function tokenText(value) {
   return cleanText(value).replace(/[\s\u00a0]/g, '');
@@ -102,7 +104,7 @@ function findNearestPill(root, node) {
 
 function estimateTextWidth(text, fontSize) {
   return Array.from(text).reduce((sum, char) => {
-    if (char === '$') return sum + fontSize * 0.62;
+    if (char === '$') return sum + fontSize * 0.62 * PRICE_SYMBOL_SCALE + fontSize * PRICE_SYMBOL_GAP_EM;
     if (char === '.') return sum + fontSize * 0.3;
     if (char === ',') return sum + fontSize * 0.28;
     if (/\d/.test(char)) return sum + fontSize * 0.74;
@@ -135,6 +137,11 @@ function setFontSize(node, fontSize) {
   const value = String(Number(fontSize.toFixed(3)));
   text?.setAttribute('font-size', value);
   node.setAttribute('font-size', value);
+
+  const symbolSize = String(Number((fontSize * PRICE_SYMBOL_SCALE).toFixed(3)));
+  node.querySelectorAll?.('[data-sushiclub-price-symbol="true"]').forEach((symbol) => {
+    symbol.setAttribute('font-size', symbolSize);
+  });
 }
 
 function applyPriceTypography(node, typography) {
@@ -171,15 +178,40 @@ function currentFontSize(node) {
   return nodeNumberAttr(node, 'font-size') ?? 42;
 }
 
+function setPriceText(node, priceText, fontSize) {
+  node.textContent = '';
+
+  if (!priceText?.startsWith('$')) {
+    node.textContent = priceText || '';
+    return;
+  }
+
+  const doc = node.ownerDocument;
+  const namespace = node.namespaceURI || 'http://www.w3.org/2000/svg';
+  const symbol = doc.createElementNS(namespace, 'tspan');
+  const value = doc.createElementNS(namespace, 'tspan');
+
+  symbol.textContent = '$';
+  symbol.setAttribute('data-sushiclub-price-symbol', 'true');
+  symbol.setAttribute('font-size', String(Number((fontSize * PRICE_SYMBOL_SCALE).toFixed(3))));
+  symbol.setAttribute('dominant-baseline', 'middle');
+  symbol.setAttribute('alignment-baseline', 'middle');
+
+  value.textContent = priceText.slice(1);
+  value.setAttribute('dx', String(Number((fontSize * PRICE_SYMBOL_GAP_EM).toFixed(3))));
+
+  node.append(symbol, value);
+}
+
 function centerAndFitPrice(node, priceText, pill, typography) {
   const originalMarker = tokenText(node.textContent || '');
-  node.textContent = priceText || '';
+  const baseFontSize = currentFontSize(node);
+  setPriceText(node, priceText, baseFontSize);
   applyPriceTypography(node, typography);
   removePriceFilterCrop(node);
 
   const text = textElementFor(node);
 
-  const baseFontSize = currentFontSize(node);
   const maxWidth = pill
     ? Math.max(1, pill.width - Math.max(54, pill.width * 0.28))
     : Math.max(
