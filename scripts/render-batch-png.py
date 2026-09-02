@@ -21,6 +21,13 @@ PRICE_SYMBOL_SCALE = 0.66
 PRICE_SYMBOL_GAP_EM = 0.12
 
 
+def price_anchor_x(price_text, pill, font_size):
+    if not price_text.startswith("$"):
+        return pill["center_x"]
+    prefix_width = font_size * (0.62 * PRICE_SYMBOL_SCALE + PRICE_SYMBOL_GAP_EM)
+    return pill["center_x"] - prefix_width / 2
+
+
 def clean_text(value):
     return re.sub(r"\s+", " ", value or "").strip()
 
@@ -265,9 +272,9 @@ def center_and_fit_price(node, price_text, pill):
         if text is not None:
             text.set("text-anchor", "middle")
             text.set("dominant-baseline", "middle")
-            text.set("alignment-baseline", "middle")
+        text.set("alignment-baseline", "middle")
         max_width = max(1, pill["width"] - max(54, pill["width"] * 0.28))
-        node.set("x", f"{pill['center_x']:.3f}".rstrip("0").rstrip("."))
+        node.set("x", f"{price_anchor_x(price_text, pill, base_size):.3f}".rstrip("0").rstrip("."))
         node.set("y", f"{pill['center_y']:.3f}".rstrip("0").rstrip("."))
     else:
         placeholder_width = estimate_text_width(original_marker, base_size)
@@ -284,6 +291,8 @@ def center_and_fit_price(node, price_text, pill):
     scale = max(0.62, min(1, max_width / estimated))
     next_size = font_size * scale
     set_price_font_size(node, text, next_size)
+    if pill:
+        node.set("x", f"{price_anchor_x(price_text, pill, next_size):.3f}".rstrip("0").rstrip("."))
 
     if estimate_text_width(price_text, next_size) > max_width:
         node.set("textLength", f"{max_width:.3f}".rstrip("0").rstrip("."))
