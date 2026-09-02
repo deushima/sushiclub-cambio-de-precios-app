@@ -3,10 +3,37 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build && node scripts/sync-pages-root.mjs",
+    "build:desktop": "node scripts/build-desktop.mjs",
+    "desktop": "pnpm build:desktop && electron .",
+    "dist:desktop": "pnpm build:desktop && electron-builder --win portable",
     "preview": "vite preview --host 127.0.0.1"
+  },
+  "build": {
+    "appId": "com.sushiclub.cambiodeprecios",
+    "productName": "SUSHICLUB Cambio de Precios",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "dist-desktop/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "SUSHICLUB-Cambio-de-Precios-${version}.${ext}"
+    }
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.2",
@@ -18,5 +45,8 @@
     "vite": "^5.4.11",
     "xlsx": "^0.18.5"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "electron": "^44.1.0",
+    "electron-builder": "^26.15.3"
+  }
 }

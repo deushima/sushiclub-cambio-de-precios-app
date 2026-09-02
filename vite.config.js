@@ -1,12 +1,14 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const isDesktopBuild = process.env.BUILD_TARGET === 'desktop';
+
 export default defineConfig({
   root: 'src',
-  base: '/sushiclub-cambio-de-precios-app/',
+  base: isDesktopBuild ? './' : '/sushiclub-cambio-de-precios-app/',
   plugins: [react()],
   build: {
-    outDir: '../dist',
+    outDir: isDesktopBuild ? '../dist-desktop' : '../dist',
     emptyOutDir: true,
   },
 });

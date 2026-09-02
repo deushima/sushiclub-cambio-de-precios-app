@@ -724,7 +724,11 @@ function outputFormatFlags(outputFormat = 'png') {
 }
 
 function canExportToDirectory() {
-  return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';
+  return (
+    typeof window !== 'undefined' &&
+    (typeof window.sushiClubDesktop?.selectDirectory === 'function' ||
+      typeof window.showDirectoryPicker === 'function')
+  );
 }
 
 function yieldToBrowser() {
@@ -751,6 +755,47 @@ async function writeBlobToDirectory(rootHandle, outputPath, blob) {
     await writable.write(blob);
   } finally {
     await writable.close();
+  }
+}
+
+function cancelExportError() {
+  const error = new Error('Exportacion cancelada.');
+  error.name = 'AbortError';
+  return error;
+}
+
+async function pickOutputDestination(folderName) {
+  if (typeof window !== 'undefined' && typeof window.sushiClubDesktop?.selectDirectory === 'function') {
+    const directoryPath = await window.sushiClubDesktop.selectDirectory();
+    if (!directoryPath) throw cancelExportError();
+    return {
+      kind: 'desktop',
+      folderName,
+      directoryPath,
+    };
+  }
+
+  if (typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function') {
+    const pickedDirectory = await window.showDirectoryPicker({ id: 'sushiclub-export', mode: 'readwrite' });
+    return {
+      kind: 'browser',
+      folderName,
+      rootHandle: await pickedDirectory.getDirectoryHandle(folderName, { create: true }),
+    };
+  }
+
+  return null;
+}
+
+async function writeBlobToDestination(destination, outputPath, blob) {
+  if (destination?.kind === 'desktop') {
+    const buffer = await blob.arrayBuffer();
+    await window.sushiClubDesktop.writeFile(`${destination.folderName}/${outputPath}`, buffer);
+    return;
+  }
+
+  if (destination?.kind === 'browser') {
+    await writeBlobToDirectory(destination.rootHandle, outputPath, blob);
   }
 }
 
@@ -904,13 +949,9 @@ export async function exportPriceZip({
   }, 0);
   const results = [];
   const useDirectoryExport = canExportToDirectory();
-  const pickedDirectory = useDirectoryExport
-    ? await window.showDirectoryPicker({ id: 'sushiclub-export', mode: 'readwrite' })
-    : null;
-  const outputRootHandle = pickedDirectory
-    ? await pickedDirectory.getDirectoryHandle(`sushiclub-${safeProduct}-precios`, { create: true })
-    : null;
-  const zip = outputRootHandle ? null : new JSZip();
+  const outputFolderName = `sushiclub-${safeProduct}-precios`;
+  const outputDestination = useDirectoryExport ? await pickOutputDestination(outputFolderName) : null;
+  const zip = outputDestination ? null : new JSZip();
   const exportTypography = await resolveExportTypography(priceTypography);
   let done = 0;
 
@@ -921,13 +962,13 @@ export async function exportPriceZip({
       total: totalOutputs,
       stage,
       current: progressLabel(outputPath),
-      mode: outputRootHandle ? 'folder' : 'zip',
+      mode: outputDestination ? 'folder' : 'zip',
     });
   };
 
   const addOutput = async (outputPath, blob, stage) => {
-    if (outputRootHandle) {
-      await writeBlobToDirectory(outputRootHandle, outputPath, blob);
+    if (outputDestination) {
+      await writeBlobToDestination(outputDestination, outputPath, blob);
     } else {
       zip.file(outputPath, blob, { compression: 'STORE' });
     }
@@ -1006,9 +1047,9 @@ export async function exportPriceZip({
   if (!results.length) throw new Error('El modo elegido no genero archivos para descargar.');
 
   const manifest = await buildManifestRows(results);
-  if (outputRootHandle) {
-    await writeBlobToDirectory(
-      outputRootHandle,
+  if (outputDestination) {
+    await writeBlobToDestination(
+      outputDestination,
       '_reporte_precios.csv',
       new Blob([manifest], { type: 'text/csv;charset=utf-8' })
     );
@@ -1033,8 +1074,8 @@ export async function exportPriceZip({
     generatedPngCount: results.filter((result) => result.kind === 'PNG').length,
     generatedStaticCount: results.filter((result) => result.kind === 'ASSET').length,
     warningCount: results.filter((result) => result.warnings.length).length,
-    destination: outputRootHandle ? `carpeta sushiclub-${safeProduct}-precios` : `sushiclub-${safeProduct}-precios.zip`,
-    mode: outputRootHandle ? 'folder' : 'zip',
+    destination: outputDestination ? `carpeta ${outputFolderName}` : `${outputFolderName}.zip`,
+    mode: outputDestination ? 'folder' : 'zip',
     results,
   };
 }

@@ -33,3 +33,18 @@ La app modifica solo nodos `<text>` o `<tspan>` que sean placeholders completos.
 - `PNG + SVG` incluye ambas versiones.
 - Los assets fijos ya renderizados se copian solo si se activa `Incluir PNG ya existentes`.
 - `Agrupar locales con mismo precio` queda activo por defecto. Si varios locales comparten precio normal, precio Eminent y plantilla, se genera una sola carpeta con nombres unidos por ` +`, por ejemplo `ACASSUSO + PALERMO + SAN JUAN`.
+
+## Desktop
+
+La misma app tambien se puede correr como `.exe` local con Electron. El ejecutable portable se genera en:
+
+`release/SUSHICLUB-Cambio-de-Precios-0.1.0.exe`
+
+Comandos utiles:
+
+- `pnpm dev`: abre la web local para desarrollo.
+- `pnpm build`: compila y sincroniza GitHub Pages.
+- `pnpm desktop`: compila y abre la app de escritorio sin empaquetar.
+- `pnpm dist:desktop`: genera el `.exe` portable.
+
+En el `.exe`, `Descargar contenido` permite elegir una carpeta y escribe los archivos directo ahi, evitando armar un ZIP grande en memoria.

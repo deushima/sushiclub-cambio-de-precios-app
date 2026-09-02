@@ -1,8 +1,11 @@
 node_modules/
 dist/
+dist-desktop/
+release/
 .env
 .env.local
 .DS_Store
 Thumbs.db
 *.log
 .vite-dev.*.log
+*.rar
