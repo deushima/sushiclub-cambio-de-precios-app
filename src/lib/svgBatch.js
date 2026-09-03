@@ -7,11 +7,12 @@ import { resolvePriceTypography } from './priceTypography.js';
 const { saveAs } = FileSaver;
 const PRICE_SYMBOL_SCALE = 0.66;
 const PRICE_SYMBOL_GAP_EM = 0.12;
+const EMINENT_PRICE_Y_OFFSET_RATIO = 0.055;
 
-function priceAnchorX(priceText, pill, fontSize) {
-  if (!priceText?.startsWith('$')) return pill.centerX;
-  const prefixWidth = fontSize * (0.62 * PRICE_SYMBOL_SCALE + PRICE_SYMBOL_GAP_EM);
-  return pill.centerX - prefixWidth / 2;
+function priceAnchorY(marker, pill) {
+  if (!marker.startsWith('@')) return pill.centerY;
+  const offset = Math.min(7, Math.max(3, pill.height * EMINENT_PRICE_Y_OFFSET_RATIO));
+  return pill.centerY + offset;
 }
 
 function tokenText(value) {
@@ -229,8 +230,8 @@ function centerAndFitPrice(node, priceText, pill, typography) {
     text?.setAttribute('text-anchor', 'middle');
     text?.setAttribute('dominant-baseline', 'middle');
     text?.setAttribute('alignment-baseline', 'middle');
-    node.setAttribute('x', String(Number(priceAnchorX(priceText, pill, baseFontSize).toFixed(3))));
-    node.setAttribute('y', String(Number(pill.centerY.toFixed(3))));
+    node.setAttribute('x', String(Number(pill.centerX.toFixed(3))));
+    node.setAttribute('y', String(Number(priceAnchorY(originalMarker, pill).toFixed(3))));
   }
   node.removeAttribute('textLength');
   node.removeAttribute('lengthAdjust');
@@ -241,9 +242,6 @@ function centerAndFitPrice(node, priceText, pill, typography) {
   const scale = Math.max(0.62, Math.min(1, maxWidth / length));
   const nextFontSize = baseFontSize * scale;
   setFontSize(node, nextFontSize);
-  if (pill) {
-    node.setAttribute('x', String(Number(priceAnchorX(priceText, pill, nextFontSize).toFixed(3))));
-  }
 
   const adjustedLength = visibleTextLength(node, priceText);
   if (adjustedLength && adjustedLength > maxWidth) {
