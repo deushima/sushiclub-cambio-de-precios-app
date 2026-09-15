@@ -29,7 +29,7 @@ export const ACTION_PRESETS = [
     id: 'menu-club-ejecutivo',
     label: 'Club Ejecutivo',
     productIncludes: ['menu club ejecutivo'],
-    folderNames: ['Menu Club Ejecutivo', 'Menú Club Ejecutivo'],
+    folderNames: ['Menu Club Ejecutivo', 'Men\u00fa Club Ejecutivo'],
     exact: false,
     exceptionTemplates: ['BAHIA BLANCA'],
   },

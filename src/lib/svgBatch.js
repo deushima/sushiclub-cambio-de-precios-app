@@ -428,15 +428,45 @@ function knownTemplateMap(actionRule) {
   return new Map(pairs.map(([key, label]) => [templateKey(key), templateLabel(label)]));
 }
 
+function templateNameMatchesFile(fileName, templateName) {
+  const fileKey = templateKey(fileName);
+  const fullKey = templateKey(templateName);
+  if (!fileKey || !fullKey || fileKey.includes(fullKey)) return fileKey.includes(fullKey);
+
+  const words = templateLabel(templateName)
+    .split(/\s+/)
+    .map(templateKey)
+    .filter((word) => word.length >= 5);
+  return words.some((word) => fileKey.includes(word));
+}
+
+function exceptionTemplateFromFileName(fileName, known) {
+  for (const [key, name] of known.entries()) {
+    if (key === templateKey('GENERAL')) continue;
+    if (templateNameMatchesFile(fileName, name)) return { templateName: name, templateKey: key };
+  }
+
+  return null;
+}
+
 function assignTemplate(parts, actionRule) {
   const fileName = parts.at(-1) ?? '';
   const directories = parts.slice(0, -1);
   const known = knownTemplateMap(actionRule);
+  const generalKey = templateKey('GENERAL');
 
   if (!directories.length) {
+    const fileException = exceptionTemplateFromFileName(fileName, known);
+    if (fileException) {
+      return {
+        ...fileException,
+        relativeParts: [fileName],
+      };
+    }
+
     return {
       templateName: 'GENERAL',
-      templateKey: templateKey('GENERAL'),
+      templateKey: generalKey,
       relativeParts: [fileName],
     };
   }
@@ -444,6 +474,16 @@ function assignTemplate(parts, actionRule) {
   const first = directories[0];
   const firstKey = templateKey(first);
   if (known.has(firstKey)) {
+    if (firstKey === generalKey) {
+      const fileException = exceptionTemplateFromFileName(fileName, known);
+      if (fileException) {
+        return {
+          ...fileException,
+          relativeParts: [...directories.slice(1), fileName],
+        };
+      }
+    }
+
     return {
       templateName: known.get(firstKey),
       templateKey: firstKey,
@@ -451,9 +491,17 @@ function assignTemplate(parts, actionRule) {
     };
   }
 
+  const fileException = exceptionTemplateFromFileName(fileName, known);
+  if (fileException) {
+    return {
+      ...fileException,
+      relativeParts: parts,
+    };
+  }
+
   return {
     templateName: 'GENERAL',
-    templateKey: templateKey('GENERAL'),
+    templateKey: generalKey,
     relativeParts: parts,
   };
 }

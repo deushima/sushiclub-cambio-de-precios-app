@@ -116,20 +116,63 @@ function knownTemplateMap(actionRule) {
   return new Map(['GENERAL', ...(actionRule?.exceptionTemplates ?? [])].map((name) => [templateKey(name), name]));
 }
 
+function templateNameMatchesFile(fileName, templateName) {
+  const fileKey = templateKey(fileName);
+  const fullKey = templateKey(templateName);
+  if (!fileKey || !fullKey || fileKey.includes(fullKey)) return fileKey.includes(fullKey);
+
+  const words = String(templateName)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .map(templateKey)
+    .filter((word) => word.length >= 5);
+  return words.some((word) => fileKey.includes(word));
+}
+
+function exceptionTemplateFromFileName(fileName, known) {
+  for (const [key, name] of known.entries()) {
+    if (key === templateKey('GENERAL')) continue;
+    if (templateNameMatchesFile(fileName, name)) return { templateName: name, templateKey: key };
+  }
+
+  return null;
+}
+
 function assignTemplate(relativeParts, actionRule) {
+  const fileName = relativeParts.at(-1);
   const directories = relativeParts.slice(0, -1);
   const known = knownTemplateMap(actionRule);
+  const generalKey = templateKey('GENERAL');
+
   if (!directories.length) {
+    const fileException = exceptionTemplateFromFileName(fileName, known);
+    if (fileException) {
+      return { ...fileException, pieceParts: relativeParts };
+    }
+
     return { templateName: 'GENERAL', templateKey: templateKey('GENERAL'), pieceParts: relativeParts };
   }
 
   const firstKey = templateKey(directories[0]);
   if (known.has(firstKey)) {
+    if (firstKey === generalKey) {
+      const fileException = exceptionTemplateFromFileName(fileName, known);
+      if (fileException) {
+        return { ...fileException, pieceParts: [...directories.slice(1), fileName] };
+      }
+    }
+
     return {
       templateName: known.get(firstKey),
       templateKey: firstKey,
-      pieceParts: [...directories.slice(1), relativeParts.at(-1)],
+      pieceParts: [...directories.slice(1), fileName],
     };
+  }
+
+  const fileException = exceptionTemplateFromFileName(fileName, known);
+  if (fileException) {
+    return { ...fileException, pieceParts: relativeParts };
   }
 
   return { templateName: 'GENERAL', templateKey: templateKey('GENERAL'), pieceParts: relativeParts };
