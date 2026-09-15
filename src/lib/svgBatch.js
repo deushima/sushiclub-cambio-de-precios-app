@@ -500,8 +500,9 @@ function assignTemplate(parts, actionRule) {
   }
 
   return {
-    templateName: 'GENERAL',
-    templateKey: generalKey,
+    templateName: templateLabel(first),
+    templateKey: firstKey,
+    dynamicTemplate: true,
     relativeParts: parts,
   };
 }
@@ -538,19 +539,50 @@ export function planTemplateFiles(files, productName, actionRule) {
   return planAllTemplateFiles(files, productName, actionRule).filter((item) => isSvgFile(item.file));
 }
 
-function targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys) {
+function rowMatchesTemplateName(row, templateName) {
+  const template = templateKey(templateName);
+  if (!template || template === templateKey('GENERAL')) return false;
+
+  return [row.branchName, row.folderName, row.groupName, row.branchKey]
+    .map(templateKey)
+    .filter(Boolean)
+    .some((key) => template === key || template.includes(key) || key.includes(template));
+}
+
+function rowsForNamedTemplate(templateFile, priceRows) {
+  return priceRows.filter((row) => rowMatchesTemplateName(row, templateFile.templateName));
+}
+
+function templateContextFor(templateFiles, priceRows, actionRule) {
   const generalKey = templateKey('GENERAL');
-  const exceptionKeys = new Set((actionRule?.exceptionTemplates ?? []).map(templateKey));
+  const fixedExceptionKeys = new Set((actionRule?.exceptionTemplates ?? []).map(templateKey));
+  const availableKeys = new Set(templateFiles.map((file) => file.templateKey));
+  const dynamicExceptionKeys = new Set();
+
+  templateFiles.forEach((templateFile) => {
+    if (templateFile.templateKey === generalKey || fixedExceptionKeys.has(templateFile.templateKey)) return;
+    rowsForNamedTemplate(templateFile, priceRows).forEach((row) => dynamicExceptionKeys.add(row.branchKey));
+  });
+
+  return { availableKeys, dynamicExceptionKeys, fixedExceptionKeys, generalKey };
+}
+
+function targetsForTemplate(templateFile, priceRows, actionRule, templateContext) {
+  const { availableKeys, dynamicExceptionKeys, fixedExceptionKeys, generalKey } = templateContext;
 
   if (templateFile.templateKey === generalKey) {
-    return priceRows.filter((row) => !exceptionKeys.has(row.branchKey));
+    return priceRows.filter((row) => !fixedExceptionKeys.has(row.branchKey) && !dynamicExceptionKeys.has(row.branchKey));
   }
 
-  if (!availableTemplateKeys.has(templateFile.templateKey)) {
+  if (!availableKeys.has(templateFile.templateKey)) {
     return [];
   }
 
-  return priceRows.filter((row) => row.branchKey === templateFile.templateKey);
+  if (fixedExceptionKeys.has(templateFile.templateKey)) {
+    return priceRows.filter((row) => row.branchKey === templateFile.templateKey);
+  }
+
+  return rowsForNamedTemplate(templateFile, priceRows);
 }
 
 function priceGroupKey(row) {
@@ -603,36 +635,49 @@ function rowGroupsForTargets(targets, groupSamePrices = false) {
   }));
 }
 
+function rowGroupsForTemplate(templateFile, targets, groupSamePrices = false) {
+  const shouldGroupDynamicTemplate = templateFile.dynamicTemplate && targets.length > 1;
+  const groups = rowGroupsForTargets(targets, groupSamePrices || shouldGroupDynamicTemplate);
+
+  if (shouldGroupDynamicTemplate && groups.length === 1) {
+    return groups.map((group) => ({
+      ...group,
+      folderName: templateFile.templateName,
+    }));
+  }
+
+  return groups;
+}
+
 export function summarizeTemplatePlan({ svgFiles, priceRows, productName, actionRule, groupSamePrices = false }) {
   const allTemplateFiles = planAllTemplateFiles(svgFiles, productName, actionRule);
   const templateFiles = allTemplateFiles.filter((item) => isSvgFile(item.file));
   const staticFiles = allTemplateFiles.filter((item) => !isSvgFile(item.file));
-  const availableTemplateKeys = new Set(templateFiles.map((file) => file.templateKey));
+  const templateContext = templateContextFor([...templateFiles, ...staticFiles], priceRows, actionRule);
+  const { availableKeys, fixedExceptionKeys, dynamicExceptionKeys, generalKey } = templateContext;
   const templateCounts = new Map();
   const outputFolders = new Set();
   const generatedSvgCount = templateFiles.reduce((sum, templateFile) => {
-    const targets = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys);
-    const groups = rowGroupsForTargets(targets, groupSamePrices);
+    const targets = targetsForTemplate(templateFile, priceRows, actionRule, templateContext);
+    const groups = rowGroupsForTemplate(templateFile, targets, groupSamePrices);
     groups.forEach((group) => outputFolders.add(group.folderName));
     const count = groups.length;
     templateCounts.set(templateFile.templateName, (templateCounts.get(templateFile.templateName) ?? 0) + 1);
     return sum + count;
   }, 0);
   const generatedStaticCount = staticFiles.reduce((sum, templateFile) => {
-    const targets = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys);
-    return sum + rowGroupsForTargets(targets, groupSamePrices).length;
+    const targets = targetsForTemplate(templateFile, priceRows, actionRule, templateContext);
+    return sum + rowGroupsForTemplate(templateFile, targets, groupSamePrices).length;
   }, 0);
   const generatedPngCount = generatedSvgCount;
   const missingTemplates = [];
-  const generalKey = templateKey('GENERAL');
-  const exceptionKeys = new Set((actionRule?.exceptionTemplates ?? []).map(templateKey));
-  const hasGeneralTarget = priceRows.some((row) => !exceptionKeys.has(row.branchKey));
-  if (hasGeneralTarget && !availableTemplateKeys.has(generalKey)) missingTemplates.push('GENERAL');
+  const hasGeneralTarget = priceRows.some((row) => !fixedExceptionKeys.has(row.branchKey) && !dynamicExceptionKeys.has(row.branchKey));
+  if (hasGeneralTarget && !availableKeys.has(generalKey)) missingTemplates.push('GENERAL');
 
   (actionRule?.exceptionTemplates ?? []).forEach((exception) => {
     const key = templateKey(exception);
     const hasTarget = priceRows.some((row) => row.branchKey === key);
-    if (hasTarget && !availableTemplateKeys.has(key)) missingTemplates.push(exception);
+    if (hasTarget && !availableKeys.has(key)) missingTemplates.push(exception);
   });
 
   return {
@@ -944,7 +989,7 @@ export async function buildPricePreviews({
 
   const files = svgFiles.filter((file) => !isIgnoredFile(file));
   const templateFiles = planTemplateFiles(files, productName, actionRule);
-  const availableTemplateKeys = new Set(templateFiles.map((file) => file.templateKey));
+  const templateContext = templateContextFor(templateFiles, priceRows, actionRule);
   const rows = priceRows.filter((row) => row.normal && row.eminent).slice(0, rowLimit);
   const exportTypography = await resolveExportTypography(priceTypography);
   const svgTextCache = new Map();
@@ -963,7 +1008,7 @@ export async function buildPricePreviews({
 
   for (const priceRow of rows) {
     const matchingTemplates = templateFiles
-      .filter((templateFile) => targetsForTemplate(templateFile, [priceRow], actionRule, availableTemplateKeys).length)
+      .filter((templateFile) => targetsForTemplate(templateFile, [priceRow], actionRule, templateContext).length)
       .slice(0, piecesPerRow);
 
     if (!matchingTemplates.length) {
@@ -1021,17 +1066,17 @@ export async function exportPriceZip({
   if (!priceRows.length) throw new Error('No hay locales seleccionados.');
   const { includeSvg, includePng } = outputFormatFlags(outputFormat);
 
-  const availableTemplateKeys = new Set(svgTemplateFiles.map((file) => file.templateKey));
   const missing = summarizeTemplatePlan({ svgFiles: files, priceRows, productName, actionRule, groupSamePrices }).missingTemplates;
   if (missing.length) {
     throw new Error(`Falta carpeta plantilla para: ${missing.join(', ')}.`);
   }
+  const templateContext = templateContextFor(templateFiles, priceRows, actionRule);
 
   const safeProduct = slugFolder(productName || 'accion').replace(/\s+/g, '-').toLowerCase();
   const totalOutputs = templateFiles.reduce((sum, templateFile) => {
-    const targets = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys);
+    const targets = targetsForTemplate(templateFile, priceRows, actionRule, templateContext);
     if (!targets.length) return sum;
-    const targetGroups = rowGroupsForTargets(targets, groupSamePrices);
+    const targetGroups = rowGroupsForTemplate(templateFile, targets, groupSamePrices);
     if (!isSvgFile(templateFile.file)) return sum + (includePng && includeStaticAssets ? targetGroups.length : 0);
     return sum + targetGroups.length * Number(includeSvg) + targetGroups.length * Number(includePng);
   }, 0);
@@ -1066,9 +1111,9 @@ export async function exportPriceZip({
   };
 
   for (const templateFile of templateFiles) {
-    const targets = targetsForTemplate(templateFile, priceRows, actionRule, availableTemplateKeys);
+    const targets = targetsForTemplate(templateFile, priceRows, actionRule, templateContext);
     if (!targets.length) continue;
-    const targetGroups = rowGroupsForTargets(targets, groupSamePrices);
+    const targetGroups = rowGroupsForTemplate(templateFile, targets, groupSamePrices);
 
     if (!isSvgFile(templateFile.file)) {
       if (!includePng || !includeStaticAssets) continue;

@@ -610,7 +610,7 @@ export default function App() {
               </label>
 
               <div className="template-list">
-                {templateKeysForRule(actionRule).map((templateName) => {
+                {Array.from(new Set([...templateKeysForRule(actionRule), ...svgPlan.templateCounts.map((item) => item.name)])).map((templateName) => {
                   const count = svgPlan.templateCounts.find((item) => item.name === templateName)?.count ?? 0;
                   const missing = svgPlan.missingTemplates.includes(templateName);
                   return (

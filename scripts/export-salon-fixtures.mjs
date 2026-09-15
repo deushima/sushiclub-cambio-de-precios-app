@@ -175,19 +175,52 @@ function assignTemplate(relativeParts, actionRule) {
     return { ...fileException, pieceParts: relativeParts };
   }
 
-  return { templateName: 'GENERAL', templateKey: templateKey('GENERAL'), pieceParts: relativeParts };
+  return {
+    templateName: String(directories[0] || '').replace(/\s+/g, ' ').trim() || 'GENERAL',
+    templateKey: firstKey,
+    dynamicTemplate: true,
+    pieceParts: relativeParts,
+  };
 }
 
-function targetsForTemplate(template, rows, actionRule, availableTemplateKeys) {
-  const generalKey = templateKey('GENERAL');
-  const exceptionKeys = new Set((actionRule?.exceptionTemplates ?? []).map(templateKey));
+function rowMatchesTemplateName(row, templateName) {
+  const template = templateKey(templateName);
+  if (!template || template === templateKey('GENERAL')) return false;
 
-  if (template.templateKey === generalKey) {
-    return rows.filter((row) => !exceptionKeys.has(row.branchKey));
+  return [row.branchName, row.folderName, row.groupName, row.branchKey]
+    .map(templateKey)
+    .filter(Boolean)
+    .some((key) => template === key || template.includes(key) || key.includes(template));
+}
+
+function rowsForNamedTemplate(template, rows) {
+  return rows.filter((row) => rowMatchesTemplateName(row, template.templateName));
+}
+
+function templateContextFor(templates, rows, actionRule) {
+  const generalKey = templateKey('GENERAL');
+  const fixedExceptionKeys = new Set((actionRule?.exceptionTemplates ?? []).map(templateKey));
+  const availableKeys = new Set(templates.map((template) => template.templateKey));
+  const dynamicExceptionKeys = new Set();
+
+  for (const template of templates) {
+    if (template.templateKey === generalKey || fixedExceptionKeys.has(template.templateKey)) continue;
+    rowsForNamedTemplate(template, rows).forEach((row) => dynamicExceptionKeys.add(row.branchKey));
   }
 
-  if (!availableTemplateKeys.has(template.templateKey)) return [];
-  return rows.filter((row) => row.branchKey === template.templateKey);
+  return { availableKeys, dynamicExceptionKeys, fixedExceptionKeys, generalKey };
+}
+
+function targetsForTemplate(template, rows, actionRule, templateContext) {
+  const { availableKeys, dynamicExceptionKeys, fixedExceptionKeys, generalKey } = templateContext;
+
+  if (template.templateKey === generalKey) {
+    return rows.filter((row) => !fixedExceptionKeys.has(row.branchKey) && !dynamicExceptionKeys.has(row.branchKey));
+  }
+
+  if (!availableKeys.has(template.templateKey)) return [];
+  if (fixedExceptionKeys.has(template.templateKey)) return rows.filter((row) => row.branchKey === template.templateKey);
+  return rowsForNamedTemplate(template, rows);
 }
 
 function compactBranchFolderName(rows) {
@@ -218,6 +251,15 @@ function rowGroupsForTargets(targets) {
     ...group,
     folderName: compactBranchFolderName(group.priceRows),
   }));
+}
+
+function rowGroupsForTemplate(template, targets) {
+  const groups = rowGroupsForTargets(targets);
+  if (template.dynamicTemplate && targets.length > 1 && groups.length === 1) {
+    return groups.map((group) => ({ ...group, folderName: template.templateName }));
+  }
+
+  return groups;
 }
 
 function outputPngPath(actionName, folderName, pieceParts) {
@@ -278,12 +320,11 @@ for (const action of SELECTED_ACTIONS) {
         ...assignTemplate(splitRelative(copySourcePath, action.folder), actionRule),
       }))
     : [];
-  const availableTemplateKeys = new Set(templates.map((template) => template.templateKey));
-  staticPngTemplates.forEach((template) => availableTemplateKeys.add(template.templateKey));
+  const templateContext = templateContextFor([...templates, ...staticPngTemplates], rows, actionRule);
   const jobs = [];
 
   for (const template of templates) {
-    const groups = rowGroupsForTargets(targetsForTemplate(template, rows, actionRule, availableTemplateKeys));
+    const groups = rowGroupsForTemplate(template, targetsForTemplate(template, rows, actionRule, templateContext));
     for (const group of groups) {
       jobs.push({
         sourcePath: template.sourcePath,
@@ -297,7 +338,7 @@ for (const action of SELECTED_ACTIONS) {
   }
 
   for (const template of staticPngTemplates) {
-    const groups = rowGroupsForTargets(targetsForTemplate(template, rows, actionRule, availableTemplateKeys));
+    const groups = rowGroupsForTemplate(template, targetsForTemplate(template, rows, actionRule, templateContext));
     for (const group of groups) {
       jobs.push({
         copySourcePath: template.copySourcePath,
